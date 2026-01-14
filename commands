@@ -12,7 +12,7 @@ case "$1" in
     echo "Manage mail relay services"
     echo ""
     echo "Commands:"
-    echo "  mail:create <name>           Create a mail relay service"
+    echo "  mail:create [name]           Create a mail relay service (default: 'default')"
     echo "  mail:destroy <name>          Destroy a mail relay service"
     echo "  mail:link <name> <app>       Link app to mail service"
     echo "  mail:unlink <name> <app>     Unlink app from mail service"

@@ -5,14 +5,7 @@ set -eo pipefail
 PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$PLUGIN_BASE_PATH/config"
 
-SERVICE="$1"
-
-if [[ -z "$SERVICE" ]]; then
-  echo "Usage: dokku mail:create <name>"
-  echo ""
-  echo "Create a mail relay service"
-  exit 1
-fi
+SERVICE="${1:-default}"
 
 SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
 CONTAINER_NAME="dokku.mail.$SERVICE"
