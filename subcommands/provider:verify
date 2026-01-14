@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+source "$PLUGIN_BASE_PATH/providers/loader.sh"
+
+# Skip command name if passed
+[[ "$1" == "mail:provider:verify" ]] && shift
+
+SERVICE="${1:-default}"
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  exit 1
+fi
+
+# Load provider
+load_provider "$SERVICE"
+
+echo "=====> Verifying provider for $SERVICE"
+if provider_verify "$SERVICE"; then
+  echo "-----> Provider verification successful"
+else
+  echo "!     Provider verification failed"
+  exit 1
+fi

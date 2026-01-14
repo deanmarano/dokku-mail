@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+source "$PLUGIN_BASE_PATH/providers/loader.sh"
+
+# Skip command name if passed
+[[ "$1" == "mail:provider:apply" ]] && shift
+
+SERVICE="${1:-default}"
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+CONTAINER_NAME="dokku.mail.$SERVICE"
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  exit 1
+fi
+
+# Load provider
+load_provider "$SERVICE"
+
+echo "-----> Applying provider $PROVIDER_NAME to service $SERVICE"
+
+# Stop and remove existing container
+if docker ps -aq -f "name=$CONTAINER_NAME" | grep -q .; then
+  echo "-----> Stopping existing container"
+  docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+fi
+
+# Pull new image
+echo "-----> Pulling $PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION"
+docker pull "$PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION" || true
+
+# Create new container
+echo "-----> Starting container with $PROVIDER_NAME provider"
+if ! provider_create_container "$SERVICE"; then
+  echo "!     Failed to create container"
+  exit 1
+fi
+
+# Update stored image info
+echo "$PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION" > "$SERVICE_ROOT/IMAGE"
+
+# Get new container IP
+sleep 2  # Wait for container to start
+CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME")
+SMTP_PORT=$(provider_get_smtp_port)
+
+echo "-----> Provider $PROVIDER_NAME applied to $SERVICE"
+echo "       Container: $CONTAINER_NAME"
+echo "       IP: $CONTAINER_IP"
+echo "       SMTP Port: $SMTP_PORT"
+
+# Check for linked apps that need updating
+if [[ -f "$SERVICE_ROOT/LINKS" ]] && [[ -s "$SERVICE_ROOT/LINKS" ]]; then
+  echo ""
+  echo "-----> Updating linked apps with new SMTP settings"
+  while read -r APP; do
+    if [[ -n "$APP" ]]; then
+      echo "       Updating $APP..."
+      dokku config:set --no-restart "$APP" \
+        SMTP_HOST="$CONTAINER_IP" \
+        SMTP_PORT="$SMTP_PORT" \
+        MAIL_URL="smtp://$CONTAINER_IP:$SMTP_PORT" >/dev/null
+    fi
+  done < "$SERVICE_ROOT/LINKS"
+  echo ""
+  echo "       Restart your apps to apply changes"
+fi

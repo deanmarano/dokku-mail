@@ -4,6 +4,7 @@ set -eo pipefail
 
 PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$PLUGIN_BASE_PATH/config"
+source "$PLUGIN_BASE_PATH/providers/loader.sh"
 
 # Skip command name if passed (dokku passes "mail:create" as $1)
 [[ "$1" == "mail:create" ]] && shift
@@ -23,28 +24,37 @@ echo "-----> Creating mail service $SERVICE"
 
 # Create service directory
 mkdir -p "$SERVICE_ROOT"
+mkdir -p "$SERVICE_ROOT/provider-config"
 
-# Pull image if needed
-echo "-----> Pulling $PLUGIN_IMAGE:$PLUGIN_IMAGE_VERSION"
-docker pull "$PLUGIN_IMAGE:$PLUGIN_IMAGE_VERSION" || true
+# Set default provider to mock
+echo "mock" > "$SERVICE_ROOT/PROVIDER"
 
-# Create and start container
-# MailHog: SMTP on 1025, Web UI on 8025
+# Load mock provider
+load_provider "$SERVICE"
+
+# Pull image
+echo "-----> Pulling $PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION"
+docker pull "$PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION" || true
+
+# Create container using provider
 echo "-----> Starting container"
-docker run -d \
-  --name "$CONTAINER_NAME" \
-  --restart unless-stopped \
-  --network bridge \
-  -p "$PLUGIN_WEB_PORT:8025" \
-  "$PLUGIN_IMAGE:$PLUGIN_IMAGE_VERSION"
+provider_create_container "$SERVICE"
 
 # Store service metadata
 echo "$CONTAINER_NAME" > "$SERVICE_ROOT/CONTAINER_NAME"
-echo "$PLUGIN_IMAGE:$PLUGIN_IMAGE_VERSION" > "$SERVICE_ROOT/IMAGE"
+echo "$PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION" > "$SERVICE_ROOT/IMAGE"
 touch "$SERVICE_ROOT/LINKS"
 
 echo "-----> Mail service $SERVICE created"
 echo "       Container: $CONTAINER_NAME"
-echo "       Web UI: http://localhost:$PLUGIN_WEB_PORT"
+echo "       Provider: $PROVIDER_NAME ($PROVIDER_DISPLAY_NAME)"
+
+if [[ -n "$PROVIDER_WEB_PORT" ]]; then
+  echo "       Web UI: http://localhost:$PROVIDER_WEB_PORT"
+fi
+
 echo ""
 echo "       Next: dokku mail:link $SERVICE <app>"
+echo ""
+echo "       To switch to AWS SES for real delivery:"
+echo "         dokku mail:provider:set $SERVICE aws"

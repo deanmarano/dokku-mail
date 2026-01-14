@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+# Skip command name if passed
+[[ "$1" == "mail:provider:config" ]] && shift
+
+SERVICE="${1:-default}"
+shift || true
+
+if [[ -z "$1" ]]; then
+  echo "Usage: dokku mail:provider:config <service> KEY=value [KEY=value...]"
+  echo ""
+  echo "Set provider configuration for a service"
+  exit 1
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+CONFIG_DIR="$SERVICE_ROOT/provider-config"
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  exit 1
+fi
+
+mkdir -p "$CONFIG_DIR"
+
+echo "-----> Setting provider config for $SERVICE"
+
+for arg in "$@"; do
+  if [[ "$arg" == *"="* ]]; then
+    KEY="${arg%%=*}"
+    VALUE="${arg#*=}"
+    echo "$VALUE" > "$CONFIG_DIR/$KEY"
+
+    # Mask sensitive values in output
+    if [[ "$KEY" == *"SECRET"* ]] || [[ "$KEY" == *"PASSWORD"* ]] || [[ "$KEY" == *"KEY"* ]]; then
+      echo "       $KEY=***"
+    else
+      echo "       $KEY=$VALUE"
+    fi
+  else
+    echo "!     Invalid format: $arg (expected KEY=value)"
+  fi
+done
+
+echo ""
+echo "       Apply changes with: dokku mail:provider:apply $SERVICE"

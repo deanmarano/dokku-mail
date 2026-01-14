@@ -4,6 +4,7 @@ set -eo pipefail
 
 PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$PLUGIN_BASE_PATH/config"
+source "$PLUGIN_BASE_PATH/providers/loader.sh"
 
 # Skip command name if passed
 [[ "$1" == "mail:link" ]] && shift
@@ -40,6 +41,10 @@ if grep -q "^$APP$" "$SERVICE_ROOT/LINKS" 2>/dev/null; then
   exit 1
 fi
 
+# Load provider to get SMTP port
+load_provider "$SERVICE"
+SMTP_PORT=$(provider_get_smtp_port)
+
 # Get container IP for the app to connect to
 CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME")
 
@@ -49,18 +54,22 @@ if [[ -z "$CONTAINER_IP" ]]; then
 fi
 
 echo "-----> Linking $APP to mail service $SERVICE"
+echo "-----> Setting config vars"
+echo "       MAIL_URL:   smtp://$CONTAINER_IP:$SMTP_PORT"
+echo "       SMTP_HOST:  $CONTAINER_IP"
+echo "       SMTP_PORT:  $SMTP_PORT"
 
 # Set environment variables on the app
 dokku config:set --no-restart "$APP" \
   SMTP_HOST="$CONTAINER_IP" \
-  SMTP_PORT="$PLUGIN_SMTP_PORT" \
-  MAIL_URL="smtp://$CONTAINER_IP:$PLUGIN_SMTP_PORT"
+  SMTP_PORT="$SMTP_PORT" \
+  MAIL_URL="smtp://$CONTAINER_IP:$SMTP_PORT" >/dev/null
 
 # Record the link
 echo "$APP" >> "$SERVICE_ROOT/LINKS"
 
 echo "-----> $APP linked to $SERVICE"
 echo "       SMTP_HOST=$CONTAINER_IP"
-echo "       SMTP_PORT=$PLUGIN_SMTP_PORT"
+echo "       SMTP_PORT=$SMTP_PORT"
 echo ""
 echo "       Restart your app to apply: dokku ps:restart $APP"

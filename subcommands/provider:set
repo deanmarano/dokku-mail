@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+source "$PLUGIN_BASE_PATH/providers/loader.sh"
+
+# Skip command name if passed
+[[ "$1" == "mail:provider:set" ]] && shift
+
+SERVICE="${1:-default}"
+PROVIDER="$2"
+
+if [[ -z "$PROVIDER" ]]; then
+  echo "Usage: dokku mail:provider:set <service> <provider>"
+  echo ""
+  echo "Set the mail provider for a service"
+  echo ""
+  echo "Available providers:"
+  for p in $(list_providers); do
+    echo "  - $p"
+  done
+  exit 1
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  exit 1
+fi
+
+# Check if provider exists
+if [[ ! -f "$PLUGIN_BASE_PATH/providers/$PROVIDER/provider.sh" ]]; then
+  echo "!     Unknown provider: $PROVIDER"
+  echo ""
+  echo "Available providers:"
+  for p in $(list_providers); do
+    echo "  - $p"
+  done
+  exit 1
+fi
+
+CURRENT_PROVIDER=$(cat "$SERVICE_ROOT/PROVIDER" 2>/dev/null || echo "mock")
+
+if [[ "$CURRENT_PROVIDER" == "$PROVIDER" ]]; then
+  echo "-----> Service $SERVICE is already using provider $PROVIDER"
+  exit 0
+fi
+
+echo "-----> Setting provider to $PROVIDER for service $SERVICE"
+
+# Save new provider
+echo "$PROVIDER" > "$SERVICE_ROOT/PROVIDER"
+
+# Clear old provider config if switching providers
+if [[ "$CURRENT_PROVIDER" != "$PROVIDER" ]]; then
+  rm -rf "$SERVICE_ROOT/provider-config"
+  mkdir -p "$SERVICE_ROOT/provider-config"
+fi
+
+echo "-----> Provider set to $PROVIDER"
+echo ""
+echo "       Next steps:"
+
+# Load provider to show required config
+source "$PLUGIN_BASE_PATH/providers/$PROVIDER/provider.sh"
+if [[ -n "$PROVIDER_REQUIRED_CONFIG" ]]; then
+  echo "       Configure required settings:"
+  for key in $PROVIDER_REQUIRED_CONFIG; do
+    echo "         dokku mail:provider:config $SERVICE $key=<value>"
+  done
+  echo ""
+  echo "       Then apply changes:"
+fi
+echo "         dokku mail:provider:apply $SERVICE"

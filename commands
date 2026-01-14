@@ -20,6 +20,13 @@ case "$1" in
     echo "  mail:logs <name> [-t]        Show service logs"
     echo "  mail:list                    List all mail services"
     echo "  mail:info <name>             Show service info"
+    echo ""
+    echo "Provider commands:"
+    echo "  mail:provider:set <name> <provider>     Set provider (mock, aws)"
+    echo "  mail:provider:config <name> KEY=val     Configure provider settings"
+    echo "  mail:provider:apply <name>              Apply provider changes"
+    echo "  mail:provider:info <name>               Show provider config"
+    echo "  mail:provider:verify <name>             Verify provider credentials"
     ;;
   mail:*)
     subcommand="${1#mail:}"
