@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+SERVICE="$1"
+TO="$2"
+
+if [[ -z "$SERVICE" ]] || [[ -z "$TO" ]]; then
+  echo "Usage: dokku mail:test <name> <to-email>"
+  echo ""
+  echo "Send a test email through the mail service"
+  exit 1
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+CONTAINER_NAME="dokku.mail.$SERVICE"
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  exit 1
+fi
+
+# Check if container is running
+if ! docker ps -q -f "name=$CONTAINER_NAME" | grep -q .; then
+  echo "!     Service $SERVICE is not running"
+  echo "      Run: dokku mail:start $SERVICE"
+  exit 1
+fi
+
+# Get container IP
+CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME")
+
+TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+HOSTNAME=$(hostname)
+
+echo "-----> Sending test email to $TO"
+
+# Use nc/telnet to send email via SMTP (MailHog doesn't have sendmail)
+{
+  echo "HELO localhost"
+  sleep 0.1
+  echo "MAIL FROM:<dokku-mail@$HOSTNAME>"
+  sleep 0.1
+  echo "RCPT TO:<$TO>"
+  sleep 0.1
+  echo "DATA"
+  sleep 0.1
+  echo "From: dokku-mail@$HOSTNAME"
+  echo "To: $TO"
+  echo "Subject: [dokku-mail] Test email from $SERVICE"
+  echo "Date: $TIMESTAMP"
+  echo ""
+  echo "This is a test email sent from dokku mail service '$SERVICE'."
+  echo ""
+  echo "Timestamp: $TIMESTAMP"
+  echo "Server: $HOSTNAME"
+  echo "Service: $SERVICE"
+  echo ""
+  echo "If you received this email, mail delivery is working correctly."
+  echo ""
+  echo "--"
+  echo "Sent by dokku-mail plugin"
+  echo "."
+  sleep 0.1
+  echo "QUIT"
+} | nc -q 1 "$CONTAINER_IP" "$PLUGIN_SMTP_PORT"
+
+echo "-----> Test email sent to $TO"
+echo "       View in MailHog UI: http://localhost:$PLUGIN_WEB_PORT"

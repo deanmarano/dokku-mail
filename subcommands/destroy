@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+SERVICE="$1"
+FORCE=""
+
+# Parse flags
+for arg in "$@"; do
+  case "$arg" in
+    -f|--force)
+      FORCE="true"
+      ;;
+  esac
+done
+
+if [[ -z "$SERVICE" ]]; then
+  echo "Usage: dokku mail:destroy <name> [-f|--force]"
+  echo ""
+  echo "Destroy a mail relay service"
+  exit 1
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+CONTAINER_NAME="dokku.mail.$SERVICE"
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  exit 1
+fi
+
+# Check for linked apps
+LINKS=$(cat "$SERVICE_ROOT/LINKS" 2>/dev/null | grep -v '^$' || true)
+if [[ -n "$LINKS" ]] && [[ -z "$FORCE" ]]; then
+  echo "!     Service $SERVICE still has linked apps:"
+  echo "$LINKS" | sed 's/^/       /'
+  echo ""
+  echo "       Unlink apps first or use --force"
+  exit 1
+fi
+
+# Confirm unless --force
+if [[ -z "$FORCE" ]]; then
+  echo "!     WARNING: This will destroy $SERVICE and all its data"
+  echo -n "       Continue? [y/N] "
+  read -r response
+  if [[ ! "$response" =~ ^[Yy]$ ]]; then
+    echo "       Aborted"
+    exit 1
+  fi
+fi
+
+echo "-----> Destroying mail service $SERVICE"
+
+# Stop and remove container
+if docker ps -a -q -f "name=$CONTAINER_NAME" | grep -q .; then
+  echo "-----> Removing container"
+  docker rm -f "$CONTAINER_NAME" || true
+fi
+
+# Remove service directory
+echo "-----> Removing service data"
+rm -rf "$SERVICE_ROOT"
+
+echo "-----> Mail service $SERVICE destroyed"

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+echo "=====> Mail Services"
+
+if [[ ! -d "$PLUGIN_DATA_ROOT" ]]; then
+  exit 0
+fi
+
+for SERVICE_ROOT in "$PLUGIN_DATA_ROOT"/*/; do
+  if [[ -d "$SERVICE_ROOT" ]]; then
+    SERVICE=$(basename "$SERVICE_ROOT")
+    CONTAINER_NAME="dokku.mail.$SERVICE"
+
+    # Check container status
+    if docker ps -q -f "name=$CONTAINER_NAME" | grep -q .; then
+      STATUS="running"
+    elif docker ps -aq -f "name=$CONTAINER_NAME" | grep -q .; then
+      STATUS="stopped"
+    else
+      STATUS="missing"
+    fi
+
+    # Count linked apps
+    LINK_COUNT=$(grep -c . "$SERVICE_ROOT/LINKS" 2>/dev/null || echo "0")
+
+    echo "$SERVICE    $STATUS    $LINK_COUNT linked"
+  fi
+done

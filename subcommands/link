@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+SERVICE="$1"
+APP="$2"
+
+if [[ -z "$SERVICE" ]] || [[ -z "$APP" ]]; then
+  echo "Usage: dokku mail:link <name> <app>"
+  echo ""
+  echo "Link an app to a mail service"
+  exit 1
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+CONTAINER_NAME="dokku.mail.$SERVICE"
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  echo "      Run: dokku mail:create $SERVICE"
+  exit 1
+fi
+
+# Check if app exists
+if ! dokku apps:exists "$APP" 2>/dev/null; then
+  echo "!     App $APP does not exist"
+  exit 1
+fi
+
+# Check if already linked
+if grep -q "^$APP$" "$SERVICE_ROOT/LINKS" 2>/dev/null; then
+  echo "!     App $APP is already linked to $SERVICE"
+  exit 1
+fi
+
+# Get container IP for the app to connect to
+CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME")
+
+if [[ -z "$CONTAINER_IP" ]]; then
+  echo "!     Could not get container IP. Is the service running?"
+  exit 1
+fi
+
+echo "-----> Linking $APP to mail service $SERVICE"
+
+# Set environment variables on the app
+dokku config:set --no-restart "$APP" \
+  SMTP_HOST="$CONTAINER_IP" \
+  SMTP_PORT="$PLUGIN_SMTP_PORT" \
+  MAIL_URL="smtp://$CONTAINER_IP:$PLUGIN_SMTP_PORT"
+
+# Record the link
+echo "$APP" >> "$SERVICE_ROOT/LINKS"
+
+echo "-----> $APP linked to $SERVICE"
+echo "       SMTP_HOST=$CONTAINER_IP"
+echo "       SMTP_PORT=$PLUGIN_SMTP_PORT"
+echo ""
+echo "       Restart your app to apply: dokku ps:restart $APP"

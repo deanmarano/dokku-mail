@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+SERVICE="$1"
+
+if [[ -z "$SERVICE" ]]; then
+  echo "Usage: dokku mail:info <name>"
+  echo ""
+  echo "Show info for a mail service"
+  exit 1
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+CONTAINER_NAME="dokku.mail.$SERVICE"
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  exit 1
+fi
+
+echo "=====> $SERVICE mail service information"
+
+# Container status
+if docker ps -q -f "name=$CONTAINER_NAME" | grep -q .; then
+  STATUS="running"
+  CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME")
+elif docker ps -aq -f "name=$CONTAINER_NAME" | grep -q .; then
+  STATUS="stopped"
+  CONTAINER_IP="n/a"
+else
+  STATUS="missing"
+  CONTAINER_IP="n/a"
+fi
+
+echo "       Status: $STATUS"
+echo "       Container: $CONTAINER_NAME"
+echo "       IP: $CONTAINER_IP"
+echo "       SMTP Port: $PLUGIN_SMTP_PORT"
+echo "       Web UI: http://localhost:$PLUGIN_WEB_PORT"
+
+# Image
+if [[ -f "$SERVICE_ROOT/IMAGE" ]]; then
+  echo "       Image: $(cat "$SERVICE_ROOT/IMAGE")"
+fi
+
+# Linked apps
+echo ""
+echo "       Linked apps:"
+if [[ -f "$SERVICE_ROOT/LINKS" ]] && [[ -s "$SERVICE_ROOT/LINKS" ]]; then
+  cat "$SERVICE_ROOT/LINKS" | sed 's/^/         /'
+else
+  echo "         (none)"
+fi

@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+case "$1" in
+  mail:help)
+    echo "Usage: dokku mail[:COMMAND]"
+    echo ""
+    echo "Manage mail relay services"
+    echo ""
+    echo "Commands:"
+    echo "  mail:create <name>           Create a mail relay service"
+    echo "  mail:destroy <name>          Destroy a mail relay service"
+    echo "  mail:link <name> <app>       Link app to mail service"
+    echo "  mail:unlink <name> <app>     Unlink app from mail service"
+    echo "  mail:test <name> <to>        Send test email"
+    echo "  mail:logs <name> [-t]        Show service logs"
+    echo "  mail:list                    List all mail services"
+    echo "  mail:info <name>             Show service info"
+    ;;
+  mail:*)
+    subcommand="${1#mail:}"
+    shift
+    if [[ -x "$PLUGIN_BASE_PATH/subcommands/$subcommand" ]]; then
+      exec "$PLUGIN_BASE_PATH/subcommands/$subcommand" "$@"
+    else
+      echo "Unknown command: mail:$subcommand"
+      echo "Run 'dokku mail:help' for usage"
+      exit 1
+    fi
+    ;;
+  *)
+    exit "$DOKKU_NOT_IMPLEMENTED_EXIT"
+    ;;
+esac

@@ -1,0 +1,3 @@
+[plugin]
+description = "SMTP relay service for dokku apps"
+version = "0.1.0"

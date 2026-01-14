@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+SERVICE="$1"
+
+if [[ -z "$SERVICE" ]]; then
+  echo "Usage: dokku mail:create <name>"
+  echo ""
+  echo "Create a mail relay service"
+  exit 1
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+CONTAINER_NAME="dokku.mail.$SERVICE"
+
+# Check if service already exists
+if [[ -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE already exists"
+  exit 1
+fi
+
+echo "-----> Creating mail service $SERVICE"
+
+# Create service directory
+mkdir -p "$SERVICE_ROOT"
+
+# Pull image if needed
+echo "-----> Pulling $PLUGIN_IMAGE:$PLUGIN_IMAGE_VERSION"
+docker pull "$PLUGIN_IMAGE:$PLUGIN_IMAGE_VERSION" || true
+
+# Create and start container
+# MailHog: SMTP on 1025, Web UI on 8025
+echo "-----> Starting container"
+docker run -d \
+  --name "$CONTAINER_NAME" \
+  --restart unless-stopped \
+  --network bridge \
+  -p "$PLUGIN_WEB_PORT:8025" \
+  "$PLUGIN_IMAGE:$PLUGIN_IMAGE_VERSION"
+
+# Store service metadata
+echo "$CONTAINER_NAME" > "$SERVICE_ROOT/CONTAINER_NAME"
+echo "$PLUGIN_IMAGE:$PLUGIN_IMAGE_VERSION" > "$SERVICE_ROOT/IMAGE"
+touch "$SERVICE_ROOT/LINKS"
+
+echo "-----> Mail service $SERVICE created"
+echo "       Container: $CONTAINER_NAME"
+echo "       Web UI: http://localhost:$PLUGIN_WEB_PORT"
+echo ""
+echo "       Next: dokku mail:link $SERVICE <app>"

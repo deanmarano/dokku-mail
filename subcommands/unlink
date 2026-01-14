@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+SERVICE="$1"
+APP="$2"
+
+if [[ -z "$SERVICE" ]] || [[ -z "$APP" ]]; then
+  echo "Usage: dokku mail:unlink <name> <app>"
+  echo ""
+  echo "Unlink an app from a mail service"
+  exit 1
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  exit 1
+fi
+
+# Check if linked
+if ! grep -q "^$APP$" "$SERVICE_ROOT/LINKS" 2>/dev/null; then
+  echo "!     App $APP is not linked to $SERVICE"
+  exit 1
+fi
+
+echo "-----> Unlinking $APP from mail service $SERVICE"
+
+# Remove environment variables from the app
+dokku config:unset --no-restart "$APP" SMTP_HOST SMTP_PORT MAIL_URL || true
+
+# Remove from links file
+grep -v "^$APP$" "$SERVICE_ROOT/LINKS" > "$SERVICE_ROOT/LINKS.tmp" || true
+mv "$SERVICE_ROOT/LINKS.tmp" "$SERVICE_ROOT/LINKS"
+
+echo "-----> $APP unlinked from $SERVICE"
+echo ""
+echo "       Restart your app to apply: dokku ps:restart $APP"

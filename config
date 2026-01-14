@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+export PLUGIN_COMMAND_PREFIX="mail"
+export PLUGIN_SERVICE="mail"
+export PLUGIN_DATA_ROOT="${DOKKU_LIB_ROOT:-/var/lib/dokku}/services/mail"
+
+# MailHog for testing - captures all emails with web UI
+export PLUGIN_IMAGE="mailhog/mailhog"
+export PLUGIN_IMAGE_VERSION="latest"
+export PLUGIN_SMTP_PORT="1025"
+export PLUGIN_WEB_PORT="8025"
