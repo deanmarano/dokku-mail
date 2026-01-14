@@ -5,6 +5,9 @@ set -eo pipefail
 PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$PLUGIN_BASE_PATH/config"
 
+# Skip command name if passed (dokku passes "mail:create" as $1)
+[[ "$1" == "mail:create" ]] && shift
+
 SERVICE="${1:-default}"
 
 SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"

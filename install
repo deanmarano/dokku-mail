@@ -6,5 +6,6 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config"
 
 echo "-----> Creating mail service directory"
 mkdir -p "$PLUGIN_DATA_ROOT"
+chown -R "${DOKKU_SYSTEM_USER:-dokku}:${DOKKU_SYSTEM_GROUP:-dokku}" "$PLUGIN_DATA_ROOT" 2>/dev/null || true
 
 echo "-----> Mail plugin installed successfully"

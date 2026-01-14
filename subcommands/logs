@@ -5,6 +5,9 @@ set -eo pipefail
 PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$PLUGIN_BASE_PATH/config"
 
+# Skip command name if passed
+[[ "$1" == "mail:logs" ]] && shift
+
 SERVICE="$1"
 shift || true
 
