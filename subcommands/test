@@ -4,6 +4,7 @@ set -eo pipefail
 
 PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$PLUGIN_BASE_PATH/config"
+source "$PLUGIN_BASE_PATH/providers/loader.sh"
 
 # Skip command name if passed
 [[ "$1" == "mail:test" ]] && shift
@@ -33,6 +34,10 @@ if ! docker ps -q -f "name=$CONTAINER_NAME" | grep -q .; then
   echo "      Run: dokku mail:start $SERVICE"
   exit 1
 fi
+
+# Load provider to get correct SMTP port
+load_provider "$SERVICE"
+SMTP_PORT=$(provider_get_smtp_port)
 
 # Get container IP
 CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME")
@@ -70,7 +75,9 @@ echo "-----> Sending test email to $TO"
   echo "."
   sleep 0.1
   echo "QUIT"
-} | nc -q 1 "$CONTAINER_IP" "$PLUGIN_SMTP_PORT"
+} | nc -q 1 "$CONTAINER_IP" "$SMTP_PORT"
 
 echo "-----> Test email sent to $TO"
-echo "       View in MailHog UI: http://localhost:$PLUGIN_WEB_PORT"
+if [[ "$PROVIDER_NAME" == "mock" ]]; then
+  echo "       View in MailHog UI: http://localhost:$PROVIDER_WEB_PORT"
+fi
