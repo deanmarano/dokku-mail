@@ -47,35 +47,46 @@ HOSTNAME=$(hostname)
 
 echo "-----> Sending test email to $TO"
 
-# Use nc/telnet to send email via SMTP (MailHog doesn't have sendmail)
-{
-  echo "HELO localhost"
-  sleep 0.1
-  echo "MAIL FROM:<dokku-mail@$HOSTNAME>"
-  sleep 0.1
-  echo "RCPT TO:<$TO>"
-  sleep 0.1
-  echo "DATA"
-  sleep 0.1
-  echo "From: dokku-mail@$HOSTNAME"
-  echo "To: $TO"
-  echo "Subject: [dokku-mail] Test email from $SERVICE"
-  echo "Date: $TIMESTAMP"
-  echo ""
-  echo "This is a test email sent from dokku mail service '$SERVICE'."
-  echo ""
-  echo "Timestamp: $TIMESTAMP"
-  echo "Server: $HOSTNAME"
-  echo "Service: $SERVICE"
-  echo ""
-  echo "If you received this email, mail delivery is working correctly."
-  echo ""
-  echo "--"
-  echo "Sent by dokku-mail plugin"
-  echo "."
-  sleep 0.1
-  echo "QUIT"
-} | nc -q 1 "$CONTAINER_IP" "$SMTP_PORT"
+# Build the email message
+EMAIL_MSG="From: dokku-mail@$HOSTNAME
+To: $TO
+Subject: [dokku-mail] Test email from $SERVICE
+Date: $TIMESTAMP
+
+This is a test email sent from dokku mail service '$SERVICE'.
+
+Timestamp: $TIMESTAMP
+Server: $HOSTNAME
+Service: $SERVICE
+
+If you received this email, mail delivery is working correctly.
+
+--
+Sent by dokku-mail plugin"
+
+# Send via docker exec using sendmail inside the container (works for Postfix-based providers)
+# For MailHog, fall back to nc with longer delays
+if [[ "$PROVIDER_NAME" == "mock" ]]; then
+  # MailHog accepts pipelined commands
+  {
+    sleep 0.2
+    echo "HELO localhost"
+    sleep 0.2
+    echo "MAIL FROM:<dokku-mail@$HOSTNAME>"
+    sleep 0.2
+    echo "RCPT TO:<$TO>"
+    sleep 0.2
+    echo "DATA"
+    sleep 0.2
+    echo "$EMAIL_MSG"
+    echo "."
+    sleep 0.2
+    echo "QUIT"
+  } | nc -q 2 "$CONTAINER_IP" "$SMTP_PORT"
+else
+  # Use sendmail inside the Postfix container
+  echo "$EMAIL_MSG" | docker exec -i "$CONTAINER_NAME" sendmail -f "dokku-mail@$HOSTNAME" "$TO"
+fi
 
 echo "-----> Test email sent to $TO"
 if [[ "$PROVIDER_NAME" == "mock" ]]; then
