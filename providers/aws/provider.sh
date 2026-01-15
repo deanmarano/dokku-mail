@@ -39,6 +39,7 @@ provider_create_container() {
     -e "RELAYHOST_USERNAME=$SMTP_USERNAME" \
     -e "RELAYHOST_PASSWORD=$SMTP_PASSWORD" \
     -e "ALLOWED_SENDER_DOMAINS=*" \
+    -e "POSTFIX_smtpd_recipient_restrictions=permit_mynetworks,permit_sasl_authenticated,permit" \
     "$PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION"
 }
 
