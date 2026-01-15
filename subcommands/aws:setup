@@ -222,8 +222,40 @@ echo "       Domain: $DOMAIN"
 echo "       Region: $REGION"
 echo "       Service: $SERVICE"
 echo ""
-echo "       DKIM verification may take a few minutes."
-echo "       Check status: aws sesv2 get-email-identity --email-identity $DOMAIN --region $REGION"
+
+# Check DKIM status
+DKIM_FINAL_STATUS=$(aws sesv2 get-email-identity --email-identity "$DOMAIN" --region "$REGION" \
+  --query 'DkimAttributes.Status' --output text 2>/dev/null || echo "UNKNOWN")
+if [[ "$DKIM_FINAL_STATUS" == "SUCCESS" ]]; then
+  echo "       DKIM: Verified ✓"
+else
+  echo "       DKIM: $DKIM_FINAL_STATUS (may take a few minutes to verify)"
+fi
 echo ""
-echo "       Note: SES is in sandbox mode by default."
-echo "       Request production access in the AWS console to send to unverified addresses."
+
+# Check sandbox status
+SANDBOX_MODE=true
+if PRODUCTION_ACCESS=$(aws sesv2 get-account --query 'ProductionAccessEnabled' --output text 2>/dev/null); then
+  if [[ "$PRODUCTION_ACCESS" == "True" ]]; then
+    SANDBOX_MODE=false
+  fi
+fi
+
+if [[ "$SANDBOX_MODE" == "true" ]]; then
+  echo "=====> IMPORTANT: SES Sandbox Mode"
+  echo ""
+  echo "       Your SES account is in SANDBOX MODE. You can only send to"
+  echo "       verified email addresses until you request production access."
+  echo ""
+  echo "       To test email delivery, verify a recipient email:"
+  echo ""
+  echo "         aws sesv2 create-email-identity --email-identity your@email.com --region $REGION"
+  echo ""
+  echo "       Then check that inbox and click the verification link."
+  echo ""
+  echo "       For production use, request access in the AWS Console:"
+  echo "         SES → Account dashboard → Request production access"
+  echo ""
+else
+  echo "       SES: Production access enabled ✓"
+fi
