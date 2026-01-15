@@ -45,10 +45,15 @@ CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddres
 TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 HOSTNAME=$(hostname)
 
+# Get sender domain (for SES verified identity) or fall back to hostname
+SENDER_DOMAIN=$(cat "$SERVICE_ROOT/provider-config/SENDER_DOMAIN" 2>/dev/null || echo "$HOSTNAME")
+FROM_ADDR="dokku-mail@$SENDER_DOMAIN"
+
 echo "-----> Sending test email to $TO"
+echo "       From: $FROM_ADDR"
 
 # Build the email message
-EMAIL_MSG="From: dokku-mail@$HOSTNAME
+EMAIL_MSG="From: $FROM_ADDR
 To: $TO
 Subject: [dokku-mail] Test email from $SERVICE
 Date: $TIMESTAMP
@@ -72,7 +77,7 @@ if [[ "$PROVIDER_NAME" == "mock" ]]; then
     sleep 0.2
     echo "HELO localhost"
     sleep 0.2
-    echo "MAIL FROM:<dokku-mail@$HOSTNAME>"
+    echo "MAIL FROM:<$FROM_ADDR>"
     sleep 0.2
     echo "RCPT TO:<$TO>"
     sleep 0.2
@@ -85,7 +90,7 @@ if [[ "$PROVIDER_NAME" == "mock" ]]; then
   } | nc -q 2 "$CONTAINER_IP" "$SMTP_PORT"
 else
   # Use sendmail inside the Postfix container
-  echo "$EMAIL_MSG" | docker exec -i "$CONTAINER_NAME" sendmail -f "dokku-mail@$HOSTNAME" "$TO"
+  echo "$EMAIL_MSG" | docker exec -i "$CONTAINER_NAME" sendmail -f "$FROM_ADDR" "$TO"
 fi
 
 echo "-----> Test email sent to $TO"

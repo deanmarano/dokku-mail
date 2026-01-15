@@ -225,6 +225,7 @@ echo "aws" > "$SERVICE_ROOT/PROVIDER"
 echo "$ACCESS_KEY_ID" > "$SERVICE_ROOT/provider-config/SMTP_USERNAME"
 echo "$SMTP_PASSWORD" > "$SERVICE_ROOT/provider-config/SMTP_PASSWORD"
 echo "$REGION" > "$SERVICE_ROOT/provider-config/AWS_REGION"
+echo "$DOMAIN" > "$SERVICE_ROOT/provider-config/SENDER_DOMAIN"
 
 echo "-----> Applying provider configuration..."
 dokku mail:provider:apply "$SERVICE"
