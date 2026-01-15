@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+source "$PLUGIN_BASE_PATH/providers/loader.sh"
+
+# Skip command name if passed
+[[ "$1" == "mail:doctor" ]] && shift
+
+SERVICE="${1:-default}"
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+CONTAINER_NAME="dokku.mail.$SERVICE"
+
+ERRORS=0
+WARNINGS=0
+
+check_pass() {
+  echo "       ✓ $1"
+}
+
+check_fail() {
+  echo "       ✗ $1"
+  ((ERRORS++)) || true
+}
+
+check_warn() {
+  echo "       ! $1"
+  ((WARNINGS++)) || true
+}
+
+echo "=====> Running diagnostics for mail service: $SERVICE"
+echo ""
+
+# 1. Service exists
+echo "-----> Checking service..."
+if [[ -d "$SERVICE_ROOT" ]]; then
+  check_pass "Service directory exists"
+else
+  check_fail "Service directory not found"
+  echo ""
+  echo "       Run: dokku mail:create $SERVICE"
+  exit 1
+fi
+
+# 2. Container running
+echo "-----> Checking container..."
+if docker ps -q -f "name=^${CONTAINER_NAME}$" | grep -q .; then
+  check_pass "Container is running"
+
+  CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME")
+  check_pass "Container IP: $CONTAINER_IP"
+else
+  check_fail "Container is not running"
+fi
+
+# 3. Provider configuration
+echo "-----> Checking provider..."
+PROVIDER=$(cat "$SERVICE_ROOT/PROVIDER" 2>/dev/null || echo "")
+if [[ -n "$PROVIDER" ]]; then
+  check_pass "Provider: $PROVIDER"
+else
+  check_fail "No provider configured"
+fi
+
+load_provider "$SERVICE"
+
+# 4. Provider-specific checks
+if [[ "$PROVIDER" == "aws" ]]; then
+  echo "-----> Checking AWS SES configuration..."
+
+  # Check config files exist
+  SMTP_USERNAME=$(cat "$SERVICE_ROOT/provider-config/SMTP_USERNAME" 2>/dev/null || echo "")
+  SMTP_PASSWORD=$(cat "$SERVICE_ROOT/provider-config/SMTP_PASSWORD" 2>/dev/null || echo "")
+  AWS_REGION=$(cat "$SERVICE_ROOT/provider-config/AWS_REGION" 2>/dev/null || echo "")
+  SENDER_DOMAIN=$(cat "$SERVICE_ROOT/provider-config/SENDER_DOMAIN" 2>/dev/null || echo "")
+
+  if [[ -n "$SMTP_USERNAME" ]]; then
+    check_pass "SMTP username configured: ${SMTP_USERNAME:0:4}***${SMTP_USERNAME: -4}"
+  else
+    check_fail "SMTP username not configured"
+  fi
+
+  if [[ -n "$SMTP_PASSWORD" ]]; then
+    check_pass "SMTP password configured"
+  else
+    check_fail "SMTP password not configured"
+  fi
+
+  if [[ -n "$AWS_REGION" ]]; then
+    check_pass "AWS region: $AWS_REGION"
+  else
+    check_fail "AWS region not configured"
+  fi
+
+  if [[ -n "$SENDER_DOMAIN" ]]; then
+    check_pass "Sender domain: $SENDER_DOMAIN"
+  else
+    check_warn "Sender domain not configured (test emails may fail)"
+  fi
+
+  # Check SES endpoint connectivity
+  echo "-----> Checking SES connectivity..."
+  SES_ENDPOINT="email-smtp.$AWS_REGION.amazonaws.com"
+  if nc -z -w5 "$SES_ENDPOINT" 587 2>/dev/null; then
+    check_pass "Can reach $SES_ENDPOINT:587"
+  else
+    check_fail "Cannot reach $SES_ENDPOINT:587"
+  fi
+
+  # Check AWS CLI available
+  if command -v aws &>/dev/null; then
+    check_pass "AWS CLI available"
+
+    # Check SES identity
+    echo "-----> Checking SES identity..."
+    if [[ -n "$SENDER_DOMAIN" ]]; then
+      if IDENTITY_STATUS=$(aws sesv2 get-email-identity --email-identity "$SENDER_DOMAIN" --region "$AWS_REGION" 2>/dev/null); then
+        check_pass "SES identity exists: $SENDER_DOMAIN"
+
+        # Check DKIM
+        DKIM_STATUS=$(echo "$IDENTITY_STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('DkimAttributes',{}).get('Status','UNKNOWN'))" 2>/dev/null || echo "UNKNOWN")
+        if [[ "$DKIM_STATUS" == "SUCCESS" ]]; then
+          check_pass "DKIM verified"
+        elif [[ "$DKIM_STATUS" == "PENDING" ]]; then
+          check_warn "DKIM pending verification"
+        else
+          check_fail "DKIM status: $DKIM_STATUS"
+        fi
+
+        # Check if verified for sending
+        VERIFIED=$(echo "$IDENTITY_STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('VerifiedForSendingStatus',False))" 2>/dev/null || echo "False")
+        if [[ "$VERIFIED" == "True" ]]; then
+          check_pass "Domain verified for sending"
+        else
+          check_fail "Domain not verified for sending"
+        fi
+      else
+        check_fail "SES identity not found: $SENDER_DOMAIN"
+      fi
+    fi
+
+    # Check sandbox mode
+    echo "-----> Checking SES account status..."
+    if ACCOUNT_STATUS=$(aws sesv2 get-account --region "$AWS_REGION" 2>/dev/null); then
+      PRODUCTION_ACCESS=$(echo "$ACCOUNT_STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ProductionAccessEnabled',False))" 2>/dev/null || echo "False")
+      if [[ "$PRODUCTION_ACCESS" == "True" ]]; then
+        check_pass "SES production access enabled"
+      else
+        check_warn "SES in SANDBOX MODE - can only send to verified addresses"
+      fi
+
+      # Check sending quota
+      SEND_QUOTA=$(echo "$ACCOUNT_STATUS" | python3 -c "import sys,json; d=json.load(sys.stdin).get('SendQuota',{}); print(f\"{d.get('SentLast24Hours',0):.0f}/{d.get('Max24HourSend',0):.0f}\")" 2>/dev/null || echo "unknown")
+      check_pass "Send quota (24h): $SEND_QUOTA"
+    else
+      check_warn "Cannot check SES account status (missing ses:GetAccount permission)"
+    fi
+
+    # Check IAM user
+    echo "-----> Checking IAM user..."
+    IAM_USER="ses-smtp-user-dokku-mail-$SERVICE"
+    if aws iam get-user --user-name "$IAM_USER" &>/dev/null; then
+      check_pass "IAM user exists: $IAM_USER"
+
+      # Check access key matches
+      CURRENT_KEYS=$(aws iam list-access-keys --user-name "$IAM_USER" --query 'AccessKeyMetadata[*].AccessKeyId' --output text 2>/dev/null || echo "")
+      if echo "$CURRENT_KEYS" | grep -q "$SMTP_USERNAME"; then
+        check_pass "Access key matches configured SMTP username"
+      else
+        check_fail "Access key drift detected - configured key not found in IAM"
+        echo "         Configured: $SMTP_USERNAME"
+        echo "         IAM keys: $CURRENT_KEYS"
+        echo "         Run: dokku mail:provider:reset $SERVICE && dokku mail:aws:setup $SERVICE $SENDER_DOMAIN"
+      fi
+    else
+      check_warn "IAM user not found: $IAM_USER (may have been created manually)"
+    fi
+  else
+    check_warn "AWS CLI not available - skipping AWS checks"
+  fi
+
+elif [[ "$PROVIDER" == "mock" ]]; then
+  echo "-----> Checking mock provider..."
+  check_pass "Using mock provider (MailHog)"
+  check_pass "Web UI: http://localhost:$PROVIDER_WEB_PORT"
+fi
+
+# 5. Check linked apps
+echo "-----> Checking linked apps..."
+if [[ -f "$SERVICE_ROOT/LINKS" ]] && [[ -s "$SERVICE_ROOT/LINKS" ]]; then
+  CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME" 2>/dev/null || echo "")
+  SMTP_PORT=$(provider_get_smtp_port)
+
+  while IFS= read -r APP; do
+    [[ -z "$APP" ]] && continue
+
+    if dokku apps:exists "$APP" &>/dev/null; then
+      # Check if app has correct SMTP_HOST
+      APP_SMTP_HOST=$(dokku config:get "$APP" SMTP_HOST 2>/dev/null || echo "")
+      APP_SMTP_PORT=$(dokku config:get "$APP" SMTP_PORT 2>/dev/null || echo "")
+
+      if [[ "$APP_SMTP_HOST" == "$CONTAINER_IP" ]] && [[ "$APP_SMTP_PORT" == "$SMTP_PORT" ]]; then
+        check_pass "App $APP: correctly configured"
+      else
+        check_warn "App $APP: config drift detected"
+        echo "         Expected: SMTP_HOST=$CONTAINER_IP SMTP_PORT=$SMTP_PORT"
+        echo "         Actual:   SMTP_HOST=$APP_SMTP_HOST SMTP_PORT=$APP_SMTP_PORT"
+        echo "         Run: dokku mail:link $SERVICE $APP"
+      fi
+    else
+      check_warn "App $APP: linked but app doesn't exist"
+    fi
+  done < "$SERVICE_ROOT/LINKS"
+else
+  check_pass "No linked apps"
+fi
+
+# Summary
+echo ""
+echo "=====> Diagnostics complete"
+if [[ $ERRORS -gt 0 ]]; then
+  echo "       $ERRORS error(s), $WARNINGS warning(s)"
+  exit 1
+elif [[ $WARNINGS -gt 0 ]]; then
+  echo "       $WARNINGS warning(s)"
+  exit 0
+else
+  echo "       All checks passed!"
+  exit 0
+fi
