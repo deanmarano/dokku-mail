@@ -27,6 +27,7 @@ case "$1" in
     echo "  mail:provider:apply <name>              Apply provider changes"
     echo "  mail:provider:info <name>               Show provider config"
     echo "  mail:provider:verify <name>             Verify provider credentials"
+    echo "  mail:provider:reset <name>              Reset provider for re-setup"
     echo ""
     echo "AWS setup:"
     echo "  mail:aws:setup <name> <domain> [region] Automatically set up AWS SES"

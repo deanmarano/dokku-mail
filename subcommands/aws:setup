@@ -84,7 +84,7 @@ if [[ "$CURRENT_PROVIDER" == "aws" ]]; then
     echo "-----> Service $SERVICE is already configured for AWS SES in $REGION"
     echo "       SMTP Username: ${EXISTING_USERNAME:0:4}***${EXISTING_USERNAME: -4}"
     echo ""
-    echo "       To reconfigure, first run: dokku mail:provider:set $SERVICE mock"
+    echo "       To reconfigure, first run: dokku mail:provider:reset $SERVICE"
     echo "       Then run this command again."
     exit 0
   fi

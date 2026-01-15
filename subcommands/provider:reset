@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+# Skip command name if passed
+[[ "$1" == "mail:provider:reset" ]] && shift
+
+SERVICE="${1:-default}"
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+CONTAINER_NAME="dokku.mail.$SERVICE"
+
+if [[ -z "$SERVICE" ]]; then
+  echo "Usage: dokku mail:provider:reset <name>"
+  echo ""
+  echo "Reset provider configuration to allow re-setup"
+  exit 1
+fi
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  exit 1
+fi
+
+echo "-----> Resetting provider for $SERVICE"
+
+# Stop container if running
+if docker ps -q -f "name=^${CONTAINER_NAME}$" | grep -q .; then
+  echo "       Stopping container..."
+  docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
+fi
+
+# Clear provider config
+echo "       Clearing provider configuration..."
+rm -f "$SERVICE_ROOT/PROVIDER"
+rm -rf "$SERVICE_ROOT/provider-config"
+mkdir -p "$SERVICE_ROOT/provider-config"
+
+echo "-----> Provider reset complete"
+echo "       Run 'dokku mail:aws:setup $SERVICE <domain>' to configure AWS SES"
+echo "       Or 'dokku mail:provider:set $SERVICE mock' for testing"
