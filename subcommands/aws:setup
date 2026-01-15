@@ -62,6 +62,21 @@ if [[ ! -d "$SERVICE_ROOT" ]]; then
   exit 1
 fi
 
+# Check if already configured with AWS
+CURRENT_PROVIDER=$(cat "$SERVICE_ROOT/PROVIDER" 2>/dev/null || echo "")
+if [[ "$CURRENT_PROVIDER" == "aws" ]]; then
+  EXISTING_USERNAME=$(cat "$SERVICE_ROOT/provider-config/SMTP_USERNAME" 2>/dev/null || echo "")
+  EXISTING_REGION=$(cat "$SERVICE_ROOT/provider-config/AWS_REGION" 2>/dev/null || echo "")
+  if [[ -n "$EXISTING_USERNAME" ]] && [[ "$EXISTING_REGION" == "$REGION" ]]; then
+    echo "-----> Service $SERVICE is already configured for AWS SES in $REGION"
+    echo "       SMTP Username: ${EXISTING_USERNAME:0:4}***${EXISTING_USERNAME: -4}"
+    echo ""
+    echo "       To reconfigure, first run: dokku mail:provider:set $SERVICE mock"
+    echo "       Then run this command again."
+    exit 0
+  fi
+fi
+
 # Check for AWS CLI
 if ! command -v aws &>/dev/null; then
   echo "!     AWS CLI not found. Please install it first."
@@ -100,18 +115,24 @@ else
   echo "       Identity created"
 fi
 
-# Step 3: Get DKIM records
-echo "-----> Getting DKIM records..."
+# Step 3: Get DKIM records and status
+echo "-----> Checking DKIM status..."
+DKIM_STATUS=$(aws sesv2 get-email-identity --email-identity "$DOMAIN" --region "$REGION" \
+  --query 'DkimAttributes.DkimSigningEnabled' --output text)
+DKIM_VERIFICATION=$(aws sesv2 get-email-identity --email-identity "$DOMAIN" --region "$REGION" \
+  --query 'DkimAttributes.Status' --output text)
 DKIM_TOKENS=$(aws sesv2 get-email-identity --email-identity "$DOMAIN" --region "$REGION" \
   --query 'DkimAttributes.Tokens' --output text)
+
+echo "       DKIM Status: $DKIM_VERIFICATION"
 
 if [[ -z "$DKIM_TOKENS" ]] || [[ "$DKIM_TOKENS" == "None" ]]; then
   echo "!     Could not get DKIM tokens"
   exit 1
 fi
 
-# Step 4: Add DKIM records to Route53
-echo "-----> Adding DKIM records to Route53..."
+# Step 4: Add DKIM records to Route53 (UPSERT is idempotent)
+echo "-----> Adding DKIM records to Route53 (upsert)..."
 CHANGES="["
 FIRST=true
 for TOKEN in $DKIM_TOKENS; do
@@ -129,7 +150,7 @@ for TOKEN in $DKIM_TOKENS; do
         \"ResourceRecords\": [{\"Value\": \"${TOKEN}.dkim.amazonses.com\"}]
       }
     }"
-  echo "       Added: ${TOKEN}._domainkey.${DOMAIN}"
+  echo "       Ensuring: ${TOKEN}._domainkey.${DOMAIN}"
 done
 CHANGES="$CHANGES]"
 
@@ -141,30 +162,41 @@ echo "       DKIM records added to Route53"
 
 # Step 5: Create SMTP credentials
 echo "-----> Creating SMTP credentials..."
-IAM_USER="ses-smtp-user-${SERVICE}-$(date +%Y%m%d)"
+IAM_USER="ses-smtp-user-dokku-mail-${SERVICE}"
 
 # Check if user already exists
 if aws iam get-user --user-name "$IAM_USER" &>/dev/null; then
-  echo "       IAM user $IAM_USER already exists, creating new access key..."
+  echo "       IAM user $IAM_USER already exists"
+
+  # Check if user has access keys
+  EXISTING_KEYS=$(aws iam list-access-keys --user-name "$IAM_USER" --query 'AccessKeyMetadata[*].AccessKeyId' --output text)
+  if [[ -n "$EXISTING_KEYS" ]]; then
+    echo "       User has existing access keys, deleting old keys..."
+    for KEY_ID in $EXISTING_KEYS; do
+      aws iam delete-access-key --user-name "$IAM_USER" --access-key-id "$KEY_ID"
+      echo "       Deleted key: $KEY_ID"
+    done
+  fi
 else
   # Create IAM user
   aws iam create-user --user-name "$IAM_USER" >/dev/null
-
-  # Attach SES send policy
-  aws iam put-user-policy --user-name "$IAM_USER" --policy-name "SESSendPolicy" --policy-document '{
-    "Version": "2012-10-17",
-    "Statement": [
-      {
-        "Effect": "Allow",
-        "Action": "ses:SendRawEmail",
-        "Resource": "*"
-      }
-    ]
-  }'
   echo "       Created IAM user: $IAM_USER"
 fi
 
-# Create access key
+# Ensure policy is attached (idempotent)
+aws iam put-user-policy --user-name "$IAM_USER" --policy-name "SESSendPolicy" --policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "ses:SendRawEmail",
+      "Resource": "*"
+    }
+  ]
+}'
+
+# Create new access key
+echo "       Creating new access key..."
 CREDENTIALS=$(aws iam create-access-key --user-name "$IAM_USER" --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text)
 ACCESS_KEY_ID=$(echo "$CREDENTIALS" | cut -f1)
 SECRET_ACCESS_KEY=$(echo "$CREDENTIALS" | cut -f2)
