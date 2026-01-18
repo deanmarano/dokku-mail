@@ -32,6 +32,7 @@ case "$1" in
     echo ""
     echo "AWS setup:"
     echo "  mail:aws:setup <name> <domain> [region] Automatically set up AWS SES"
+    echo "  mail:aws:add-domain <name> <domain>     Add additional sender domain"
     ;;
   mail:*)
     subcommand="${1#mail:}"
