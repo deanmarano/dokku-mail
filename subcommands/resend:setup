@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+# Skip command name if passed
+[[ "$1" == "mail:resend:setup" ]] && shift
+
+SERVICE="${1:-default}"
+DOMAIN="$2"
+API_KEY="$3"
+
+if [[ -z "$DOMAIN" ]]; then
+  echo "Usage: dokku mail:resend:setup <service> <domain> [api-key]"
+  echo ""
+  echo "Set up Resend as the mail provider"
+  echo ""
+  echo "If API key is not provided, you'll be prompted to enter it."
+  echo ""
+  echo "Steps:"
+  echo "  1. Sign up at https://resend.com"
+  echo "  2. Add and verify your domain in Resend dashboard"
+  echo "  3. Create an API key"
+  echo "  4. Run this command with your API key"
+  echo ""
+  echo "Example:"
+  echo "  dokku mail:resend:setup default example.com re_123abc..."
+  exit 1
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  echo "      Run: dokku mail:create $SERVICE"
+  exit 1
+fi
+
+# Check if already configured
+CURRENT_PROVIDER=$(cat "$SERVICE_ROOT/PROVIDER" 2>/dev/null || echo "")
+if [[ "$CURRENT_PROVIDER" == "resend" ]]; then
+  EXISTING_DOMAIN=$(cat "$SERVICE_ROOT/provider-config/SENDER_DOMAIN" 2>/dev/null || echo "")
+  if [[ -n "$EXISTING_DOMAIN" ]]; then
+    echo "-----> Service $SERVICE is already configured for Resend"
+    echo "       Sender Domain: $EXISTING_DOMAIN"
+    echo ""
+    echo "       To reconfigure, first run: dokku mail:provider:reset $SERVICE"
+    exit 0
+  fi
+fi
+
+# Prompt for API key if not provided
+if [[ -z "$API_KEY" ]]; then
+  echo "Enter your Resend API key (starts with re_):"
+  read -r API_KEY
+fi
+
+if [[ -z "$API_KEY" ]]; then
+  echo "!     API key is required"
+  exit 1
+fi
+
+if [[ ! "$API_KEY" =~ ^re_ ]]; then
+  echo "!     Invalid API key format (should start with re_)"
+  exit 1
+fi
+
+echo "-----> Setting up Resend for $DOMAIN"
+
+# Configure the mail service
+echo "-----> Configuring mail service..."
+mkdir -p "$SERVICE_ROOT/provider-config"
+echo "resend" > "$SERVICE_ROOT/PROVIDER"
+echo "$API_KEY" > "$SERVICE_ROOT/provider-config/API_KEY"
+echo "$DOMAIN" > "$SERVICE_ROOT/provider-config/SENDER_DOMAIN"
+
+echo "-----> Applying provider configuration..."
+dokku mail:provider:apply "$SERVICE"
+
+echo ""
+echo "-----> Resend setup complete!"
+echo "       Domain: $DOMAIN"
+echo "       Service: $SERVICE"
+echo ""
+echo "       Make sure your domain is verified in Resend dashboard:"
+echo "         https://resend.com/domains"
+echo ""
+echo "       Test with: dokku mail:test $SERVICE your@email.com"

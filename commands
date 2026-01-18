@@ -30,9 +30,12 @@ case "$1" in
     echo "  mail:provider:verify <name>             Verify provider credentials"
     echo "  mail:provider:reset <name>              Reset provider for re-setup"
     echo ""
-    echo "AWS setup:"
+    echo "AWS SES:"
     echo "  mail:aws:setup <name> <domain> [region] Automatically set up AWS SES"
     echo "  mail:aws:add-domain <name> <domain>     Add additional sender domain"
+    echo ""
+    echo "Resend:"
+    echo "  mail:resend:setup <name> <domain> [key] Set up Resend as provider"
     ;;
   mail:*)
     subcommand="${1#mail:}"
