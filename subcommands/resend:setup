@@ -103,6 +103,8 @@ if [[ -z "$DOMAIN_ID" ]]; then
     exit 1
   fi
   echo "       Domain created: $DOMAIN_ID"
+  # Wait for domain to be ready
+  sleep 2
 else
   echo "       Domain already exists: $DOMAIN_ID"
 fi
@@ -111,6 +113,12 @@ fi
 echo "-----> Getting DNS records..."
 DOMAIN_INFO=$(curl -s "https://api.resend.com/domains/$DOMAIN_ID" \
   -H "Authorization: Bearer $API_KEY")
+
+# Debug: show raw response if parsing fails
+if [[ -z "$DOMAIN_INFO" ]]; then
+  echo "!     Empty response from Resend API"
+  exit 1
+fi
 
 DOMAIN_STATUS=$(echo "$DOMAIN_INFO" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
 echo "       Status: $DOMAIN_STATUS"
@@ -121,6 +129,9 @@ import sys, json
 data = json.load(sys.stdin)
 domain = data.get('name', '')
 records = data.get('records', [])
+if not records:
+    print('NO_RECORDS', file=sys.stderr)
+    sys.exit(1)
 for r in records:
     rtype = r.get('type', '')
     name = r.get('name', '')
@@ -130,10 +141,11 @@ for r in records:
     if name and not name.endswith(domain):
         name = f'{name}.{domain}'
     print(f'{rtype}|{name}|{value}|{ttl}')
-" 2>/dev/null || echo "")
+" 2>&1)
 
-if [[ -z "$DNS_RECORDS" ]]; then
+if [[ -z "$DNS_RECORDS" ]] || [[ "$DNS_RECORDS" == "NO_RECORDS" ]]; then
   echo "!     Could not get DNS records from Resend"
+  echo "      Response: $DOMAIN_INFO"
   exit 1
 fi
 
