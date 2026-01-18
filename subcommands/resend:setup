@@ -115,13 +115,21 @@ DOMAIN_INFO=$(curl -s "https://api.resend.com/domains/$DOMAIN_ID" \
 DOMAIN_STATUS=$(echo "$DOMAIN_INFO" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
 echo "       Status: $DOMAIN_STATUS"
 
-# Extract DNS records
+# Extract DNS records (type|name|value|ttl)
 DNS_RECORDS=$(echo "$DOMAIN_INFO" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
+domain = data.get('name', '')
 records = data.get('records', [])
 for r in records:
-    print(f\"{r.get('record_type')}|{r.get('name')}|{r.get('value')}|{r.get('ttl', 'Auto')}\")
+    rtype = r.get('type', '')
+    name = r.get('name', '')
+    value = r.get('value', '')
+    ttl = r.get('ttl', 'Auto')
+    # Append domain to subdomain names
+    if name and not name.endswith(domain):
+        name = f'{name}.{domain}'
+    print(f'{rtype}|{name}|{value}|{ttl}')
 " 2>/dev/null || echo "")
 
 if [[ -z "$DNS_RECORDS" ]]; then
@@ -148,11 +156,9 @@ else
   # Step 4: Add DNS records to Route53
   echo "-----> Adding DNS records to Route53..."
 
-  CHANGES="["
-  FIRST=true
-
-  echo "$DNS_RECORDS" | while IFS='|' read -r TYPE NAME VALUE TTL; do
+  while IFS='|' read -r TYPE NAME VALUE TTL; do
     [[ -z "$TYPE" ]] && continue
+    [[ -z "$NAME" ]] && continue
 
     # Handle TTL
     if [[ "$TTL" == "Auto" ]] || [[ -z "$TTL" ]]; then
@@ -161,13 +167,14 @@ else
 
     echo "       Adding: $TYPE $NAME"
 
-    # For TXT records, value needs quotes
+    # For TXT records, value needs quotes (escape existing quotes first)
     if [[ "$TYPE" == "TXT" ]]; then
+      VALUE=$(echo "$VALUE" | sed 's/"/\\"/g')
       VALUE="\"$VALUE\""
     fi
 
     # Add to Route53
-    aws route53 change-resource-record-sets \
+    if aws route53 change-resource-record-sets \
       --hosted-zone-id "$HOSTED_ZONE_ID" \
       --change-batch "{
         \"Changes\": [{
@@ -179,8 +186,12 @@ else
             \"ResourceRecords\": [{\"Value\": \"$VALUE\"}]
           }
         }]
-      }" >/dev/null 2>&1 || echo "         Warning: Failed to add $NAME"
-  done
+      }" >/dev/null 2>&1; then
+      echo "         ✓ Added"
+    else
+      echo "         ✗ Failed to add"
+    fi
+  done <<< "$DNS_RECORDS"
 
   echo "       DNS records added"
 fi
