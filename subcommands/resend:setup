@@ -25,6 +25,7 @@ if [[ -z "$DOMAIN" ]]; then
   echo "Requirements:"
   echo "  - Resend API key (get from https://resend.com/api-keys)"
   echo "  - Domain hosted in Route53"
+  echo "  - jq installed"
   echo ""
   echo "Example:"
   echo "  dokku mail:resend:setup default example.com re_123abc..."
@@ -37,6 +38,13 @@ SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
 if [[ ! -d "$SERVICE_ROOT" ]]; then
   echo "!     Service $SERVICE does not exist"
   echo "      Run: dokku mail:create $SERVICE"
+  exit 1
+fi
+
+# Check for jq
+if ! command -v jq &>/dev/null; then
+  echo "!     jq not found. Please install it first."
+  echo "      apt-get install jq"
   exit 1
 fi
 
@@ -79,14 +87,7 @@ DOMAIN_RESPONSE=$(curl -s "https://api.resend.com/domains" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json")
 
-DOMAIN_ID=$(echo "$DOMAIN_RESPONSE" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-for d in data.get('data', []):
-    if d.get('name') == '$DOMAIN':
-        print(d.get('id', ''))
-        break
-" 2>/dev/null || echo "")
+DOMAIN_ID=$(echo "$DOMAIN_RESPONSE" | jq -r ".data[] | select(.name == \"$DOMAIN\") | .id" 2>/dev/null || echo "")
 
 if [[ -z "$DOMAIN_ID" ]]; then
   echo "       Creating domain in Resend..."
@@ -95,7 +96,7 @@ if [[ -z "$DOMAIN_ID" ]]; then
     -H "Content-Type: application/json" \
     -d "{\"name\": \"$DOMAIN\"}")
 
-  DOMAIN_ID=$(echo "$CREATE_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+  DOMAIN_ID=$(echo "$CREATE_RESPONSE" | jq -r '.id // empty' 2>/dev/null || echo "")
 
   if [[ -z "$DOMAIN_ID" ]]; then
     echo "!     Failed to create domain in Resend"
@@ -103,7 +104,6 @@ if [[ -z "$DOMAIN_ID" ]]; then
     exit 1
   fi
   echo "       Domain created: $DOMAIN_ID"
-  # Wait for domain to be ready
   sleep 2
 else
   echo "       Domain already exists: $DOMAIN_ID"
@@ -114,38 +114,17 @@ echo "-----> Getting DNS records..."
 DOMAIN_INFO=$(curl -s "https://api.resend.com/domains/$DOMAIN_ID" \
   -H "Authorization: Bearer $API_KEY")
 
-# Debug: show raw response if parsing fails
 if [[ -z "$DOMAIN_INFO" ]]; then
   echo "!     Empty response from Resend API"
   exit 1
 fi
 
-DOMAIN_STATUS=$(echo "$DOMAIN_INFO" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
+DOMAIN_STATUS=$(echo "$DOMAIN_INFO" | jq -r '.status // "unknown"')
 echo "       Status: $DOMAIN_STATUS"
 
-# Extract DNS records (type|name|value|ttl)
-DNS_RECORDS=$(echo "$DOMAIN_INFO" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-domain = data.get('name', '')
-records = data.get('records', [])
-if not records:
-    print('NO_RECORDS', file=sys.stderr)
-    sys.exit(1)
-for r in records:
-    rtype = r.get('type', '')
-    name = r.get('name', '')
-    value = r.get('value', '')
-    ttl = r.get('ttl', 'Auto')
-    # Append domain to subdomain names
-    if name and not name.endswith(domain):
-        name = f'{name}.{domain}'
-    print(f'{rtype}|{name}|{value}|{ttl}')
-" 2>&1)
-
-if [[ -z "$DNS_RECORDS" ]] || [[ "$DNS_RECORDS" == "NO_RECORDS" ]]; then
-  echo "!     Could not get DNS records from Resend"
-  echo "      Response: $DOMAIN_INFO"
+RECORD_COUNT=$(echo "$DOMAIN_INFO" | jq '.records | length')
+if [[ "$RECORD_COUNT" -eq 0 ]]; then
+  echo "!     No DNS records returned from Resend"
   exit 1
 fi
 
@@ -157,78 +136,67 @@ if [[ -z "$HOSTED_ZONE_ID" ]]; then
   echo "!     No Route53 hosted zone found for $DOMAIN"
   echo ""
   echo "       Add these DNS records manually:"
-  echo "$DNS_RECORDS" | while IFS='|' read -r TYPE NAME VALUE TTL; do
-    echo "         $TYPE $NAME -> $VALUE"
-  done
+  echo "$DOMAIN_INFO" | jq -r '.records[] | "         \(.type) \(.name).\(.name | if . == "" then "" else "." end)\(input.name) -> \(.value)"' 2>/dev/null || \
+  echo "$DOMAIN_INFO" | jq -r '.records[] | "         \(.type) \(.name) -> \(.value)"'
   echo ""
   echo "       Then verify in Resend dashboard and re-run this command."
 else
   echo "       Found zone: $HOSTED_ZONE_ID"
 
-  # Step 4: Add DNS records to Route53 using Python to avoid bash quoting issues
+  # Step 4: Add DNS records to Route53
   echo "-----> Adding DNS records to Route53..."
 
-  echo "$DOMAIN_INFO" | HOSTED_ZONE_ID="$HOSTED_ZONE_ID" python3 << 'PYTHON_SCRIPT'
-import sys
-import json
-import subprocess
-import os
+  # Process each record using jq
+  echo "$DOMAIN_INFO" | jq -c '.records[]' | while read -r record; do
+    TYPE=$(echo "$record" | jq -r '.type')
+    NAME=$(echo "$record" | jq -r '.name')
+    VALUE=$(echo "$record" | jq -r '.value')
+    TTL=$(echo "$record" | jq -r '.ttl // "Auto"')
 
-data = json.load(sys.stdin)
-domain = data.get('name', '')
-hosted_zone_id = os.environ['HOSTED_ZONE_ID']
-
-for record in data.get('records', []):
-    rtype = record.get('type', '')
-    name = record.get('name', '')
-    value = record.get('value', '')
-    ttl = record.get('ttl', 'Auto')
-
-    if not rtype or not name:
-        continue
+    [[ -z "$TYPE" ]] && continue
+    [[ -z "$NAME" ]] && continue
 
     # Append domain to subdomain
-    if not name.endswith(domain):
-        name = f'{name}.{domain}'
+    FULL_NAME="${NAME}.${DOMAIN}"
 
     # Handle TTL
-    if ttl == 'Auto' or not ttl:
-        ttl = 300
-    else:
-        ttl = int(ttl)
+    if [[ "$TTL" == "Auto" ]] || [[ -z "$TTL" ]]; then
+      TTL=300
+    fi
 
-    print(f'       Adding: {rtype} {name}')
+    echo "       Adding: $TYPE $FULL_NAME"
 
     # For TXT records, wrap value in quotes
-    if rtype == 'TXT':
-        value = f'"{value}"'
+    if [[ "$TYPE" == "TXT" ]]; then
+      VALUE="\"$VALUE\""
+    fi
 
-    # Build change batch
-    change_batch = {
-        "Changes": [{
-            "Action": "UPSERT",
-            "ResourceRecordSet": {
-                "Name": name,
-                "Type": rtype,
-                "TTL": ttl,
-                "ResourceRecords": [{"Value": value}]
-            }
+    # Build change batch JSON using jq
+    CHANGE_BATCH=$(jq -n \
+      --arg name "$FULL_NAME" \
+      --arg type "$TYPE" \
+      --argjson ttl "$TTL" \
+      --arg value "$VALUE" \
+      '{
+        Changes: [{
+          Action: "UPSERT",
+          ResourceRecordSet: {
+            Name: $name,
+            Type: $type,
+            TTL: $ttl,
+            ResourceRecords: [{Value: $value}]
+          }
         }]
-    }
+      }')
 
-    # Call AWS CLI
-    result = subprocess.run(
-        ['aws', 'route53', 'change-resource-record-sets',
-         '--hosted-zone-id', hosted_zone_id,
-         '--change-batch', json.dumps(change_batch)],
-        capture_output=True, text=True
-    )
-
-    if result.returncode == 0:
-        print('         ✓ Added')
-    else:
-        print(f'         ✗ Failed: {result.stderr.strip()}')
-PYTHON_SCRIPT
+    if aws route53 change-resource-record-sets \
+      --hosted-zone-id "$HOSTED_ZONE_ID" \
+      --change-batch "$CHANGE_BATCH" >/dev/null 2>&1; then
+      echo "         ✓ Added"
+    else
+      echo "         ✗ Failed to add"
+    fi
+  done
 
   echo "       DNS records added"
 fi
@@ -251,8 +219,7 @@ dokku mail:provider:apply "$SERVICE"
 # Check final status
 sleep 2
 FINAL_STATUS=$(curl -s "https://api.resend.com/domains/$DOMAIN_ID" \
-  -H "Authorization: Bearer $API_KEY" | \
-  python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null || echo "unknown")
+  -H "Authorization: Bearer $API_KEY" | jq -r '.status // "unknown"')
 
 echo ""
 echo "-----> Resend setup complete!"
