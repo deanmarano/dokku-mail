@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+# Skip command name if passed
+[[ "$1" == "mail:smtp:setup" ]] && shift
+
+SERVICE="${1:-default}"
+
+show_usage() {
+  echo "Usage: dokku mail:smtp:setup <service> [options]"
+  echo ""
+  echo "Configure a generic SMTP server as the mail provider"
+  echo ""
+  echo "Options:"
+  echo "  --host=<host>        SMTP server hostname"
+  echo "  --port=<port>        SMTP server port (default: 587)"
+  echo "  --username=<user>    SMTP username"
+  echo "  --password=<pass>    SMTP password"
+  echo "  --tls=<mode>         TLS mode: starttls, ssl, none (default: starttls)"
+  echo "  --domain=<domain>    Allowed sender domain (default: *)"
+  echo ""
+  echo "Interactive mode (no options):"
+  echo "  dokku mail:smtp:setup default"
+  echo ""
+  echo "Non-interactive mode:"
+  echo "  dokku mail:smtp:setup default --host=smtp.example.com --port=587 \\"
+  echo "    --username=user@example.com --password=secret"
+  echo ""
+  echo "Example providers:"
+  echo "  Gmail:      --host=smtp.gmail.com --port=587"
+  echo "  Outlook:    --host=smtp.office365.com --port=587"
+  echo "  Fastmail:   --host=smtp.fastmail.com --port=587"
+  echo "  Zoho:       --host=smtp.zoho.com --port=587"
+}
+
+if [[ "$SERVICE" == "--help" ]] || [[ "$SERVICE" == "-h" ]]; then
+  show_usage
+  exit 0
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  echo "      Run: dokku mail:create $SERVICE"
+  exit 1
+fi
+
+# Parse command line options
+SMTP_HOST=""
+SMTP_PORT="587"
+SMTP_USERNAME=""
+SMTP_PASSWORD=""
+SMTP_TLS="starttls"
+FROM_DOMAIN="*"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --host=*)
+      SMTP_HOST="${1#*=}"
+      shift
+      ;;
+    --port=*)
+      SMTP_PORT="${1#*=}"
+      shift
+      ;;
+    --username=*)
+      SMTP_USERNAME="${1#*=}"
+      shift
+      ;;
+    --password=*)
+      SMTP_PASSWORD="${1#*=}"
+      shift
+      ;;
+    --tls=*)
+      SMTP_TLS="${1#*=}"
+      shift
+      ;;
+    --domain=*)
+      FROM_DOMAIN="${1#*=}"
+      shift
+      ;;
+    *)
+      # Skip unknown options or service name
+      shift
+      ;;
+  esac
+done
+
+# Check if already configured
+CURRENT_PROVIDER=$(cat "$SERVICE_ROOT/PROVIDER" 2>/dev/null || echo "")
+if [[ "$CURRENT_PROVIDER" == "smtp" ]]; then
+  EXISTING_HOST=$(cat "$SERVICE_ROOT/provider-config/SMTP_HOST" 2>/dev/null || echo "")
+  if [[ -n "$EXISTING_HOST" ]]; then
+    echo "-----> Service $SERVICE is already configured for Generic SMTP"
+    echo "       Host: $EXISTING_HOST"
+    echo ""
+    echo "       To reconfigure, first run: dokku mail:provider:reset $SERVICE"
+    exit 0
+  fi
+fi
+
+# Interactive mode if required values not provided
+if [[ -z "$SMTP_HOST" ]]; then
+  echo "SMTP Host (e.g., smtp.gmail.com):"
+  read -r SMTP_HOST
+fi
+
+if [[ -z "$SMTP_HOST" ]]; then
+  echo "!     SMTP host is required"
+  exit 1
+fi
+
+if [[ -z "$SMTP_USERNAME" ]]; then
+  echo "SMTP Username:"
+  read -r SMTP_USERNAME
+fi
+
+if [[ -z "$SMTP_USERNAME" ]]; then
+  echo "!     SMTP username is required"
+  exit 1
+fi
+
+if [[ -z "$SMTP_PASSWORD" ]]; then
+  echo "SMTP Password:"
+  read -rs SMTP_PASSWORD
+  echo ""
+fi
+
+if [[ -z "$SMTP_PASSWORD" ]]; then
+  echo "!     SMTP password is required"
+  exit 1
+fi
+
+echo "-----> Setting up Generic SMTP for $SERVICE"
+echo "       Host: $SMTP_HOST"
+echo "       Port: $SMTP_PORT"
+echo "       TLS: $SMTP_TLS"
+
+# Test connection before saving
+echo "-----> Testing connection to $SMTP_HOST:$SMTP_PORT..."
+if nc -z -w5 "$SMTP_HOST" "$SMTP_PORT" 2>/dev/null; then
+  echo "       ✓ Connection successful"
+else
+  echo "!     Cannot connect to $SMTP_HOST:$SMTP_PORT"
+  echo ""
+  echo "       Check the host and port, then try again."
+  echo "       Common ports: 587 (STARTTLS), 465 (SSL/TLS), 25 (unencrypted)"
+  exit 1
+fi
+
+# Save configuration
+echo "-----> Configuring mail service..."
+mkdir -p "$SERVICE_ROOT/provider-config"
+echo "smtp" > "$SERVICE_ROOT/PROVIDER"
+echo "$SMTP_HOST" > "$SERVICE_ROOT/provider-config/SMTP_HOST"
+echo "$SMTP_PORT" > "$SERVICE_ROOT/provider-config/SMTP_PORT"
+echo "$SMTP_USERNAME" > "$SERVICE_ROOT/provider-config/SMTP_USERNAME"
+echo "$SMTP_PASSWORD" > "$SERVICE_ROOT/provider-config/SMTP_PASSWORD"
+echo "$SMTP_TLS" > "$SERVICE_ROOT/provider-config/SMTP_TLS"
+echo "$FROM_DOMAIN" > "$SERVICE_ROOT/provider-config/FROM_DOMAIN"
+
+echo "-----> Applying provider configuration..."
+dokku mail:provider:apply "$SERVICE"
+
+echo ""
+echo "-----> Generic SMTP setup complete!"
+echo "       Host: $SMTP_HOST:$SMTP_PORT"
+echo "       Service: $SERVICE"
+echo ""
+echo "       Test with: dokku mail:test $SERVICE your@email.com"

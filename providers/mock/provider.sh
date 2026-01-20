@@ -22,10 +22,18 @@ provider_create_container() {
 }
 
 provider_get_smtp_port() {
+  local SERVICE="$1"
   echo "$PROVIDER_SMTP_PORT"
 }
 
+provider_validate_config() {
+  local SERVICE="$1"
+  # Mock provider has no required config
+  return 0
+}
+
 provider_verify() {
+  local SERVICE="$1"
   echo "       Mock provider is always ready"
   echo "       Emails are captured locally (not delivered externally)"
   echo "       Web UI: http://localhost:$PROVIDER_WEB_PORT"
@@ -33,6 +41,7 @@ provider_verify() {
 }
 
 provider_info() {
+  local SERVICE="$1"
   echo "       Provider: $PROVIDER_DISPLAY_NAME"
   echo "       Image: $PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION"
   echo "       SMTP Port: $PROVIDER_SMTP_PORT"

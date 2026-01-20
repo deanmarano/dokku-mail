@@ -25,6 +25,28 @@ load_provider "$SERVICE"
 
 echo "-----> Applying provider $PROVIDER_NAME to service $SERVICE"
 
+# Validate configuration before proceeding
+echo "-----> Validating configuration..."
+if type provider_validate_config &>/dev/null; then
+  if ! provider_validate_config "$SERVICE"; then
+    echo "!     Configuration validation failed"
+    exit 1
+  fi
+  echo "       Configuration valid"
+else
+  # Fallback: check required config keys exist
+  if [[ -n "$PROVIDER_REQUIRED_CONFIG" ]]; then
+    CONFIG_DIR="$SERVICE_ROOT/provider-config"
+    for key in $PROVIDER_REQUIRED_CONFIG; do
+      if [[ ! -f "$CONFIG_DIR/$key" ]] || [[ -z "$(cat "$CONFIG_DIR/$key" 2>/dev/null)" ]]; then
+        echo "!     Missing required config: $key"
+        exit 1
+      fi
+    done
+    echo "       Configuration valid"
+  fi
+fi
+
 # Stop and remove existing container
 if docker ps -aq -f "name=$CONTAINER_NAME" | grep -q .; then
   echo "-----> Stopping existing container"
@@ -48,7 +70,7 @@ echo "$PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION" > "$SERVICE_ROOT/IMAGE"
 # Get new container IP
 sleep 2  # Wait for container to start
 CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME")
-SMTP_PORT=$(provider_get_smtp_port)
+SMTP_PORT=$(provider_get_smtp_port "$SERVICE")
 
 echo "-----> Provider $PROVIDER_NAME applied to $SERVICE"
 echo "       Container: $CONTAINER_NAME"

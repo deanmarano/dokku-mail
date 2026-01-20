@@ -34,13 +34,19 @@ show_help() {
   echo -e "    mail:provider:config <service> KEY=value          \033[2;37mset provider configuration\033[m"
   echo -e "    mail:provider:info <service>                      \033[2;37mshow provider configuration\033[m"
   echo -e "    mail:provider:reset <service>                     \033[2;37mreset provider for re-configuration\033[m"
-  echo -e "    mail:provider:set <service> <provider>            \033[2;37mset the provider (mock, aws, resend)\033[m"
+  echo -e "    mail:provider:set <service> <provider>            \033[2;37mset the provider (mock, smtp, aws, resend, mailgun, sendgrid)\033[m"
   echo -e "    mail:provider:verify <service>                    \033[2;37mverify provider credentials\033[m"
   echo ""
-  echo -e "    mail:aws:add-domain <service> <domain>            \033[2;37madd additional sender domain to AWS SES\033[m"
+  echo -e "    mail:smtp:setup <service> [options]               \033[2;37mset up generic SMTP relay\033[m"
+  echo ""
   echo -e "    mail:aws:setup <service> <domain> [region]        \033[2;37mset up AWS SES with automatic DNS configuration\033[m"
+  echo -e "    mail:aws:add-domain <service> <domain>            \033[2;37madd additional sender domain to AWS SES\033[m"
   echo ""
   echo -e "    mail:resend:setup <service> <domain> [api-key]    \033[2;37mset up Resend with automatic DNS configuration\033[m"
+  echo ""
+  echo -e "    mail:mailgun:setup <service> <domain> [api-key]   \033[2;37mset up Mailgun as provider\033[m"
+  echo ""
+  echo -e "    mail:sendgrid:setup <service> [api-key]           \033[2;37mset up SendGrid as provider\033[m"
 }
 
 case "$1" in

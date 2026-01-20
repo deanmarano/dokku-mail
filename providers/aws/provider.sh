@@ -44,7 +44,38 @@ provider_create_container() {
 }
 
 provider_get_smtp_port() {
+  local SERVICE="$1"
   echo "$PROVIDER_SMTP_PORT"
+}
+
+provider_validate_config() {
+  local SERVICE="$1"
+  local SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+  local CONFIG_DIR="$SERVICE_ROOT/provider-config"
+
+  local errors=0
+  for key in $PROVIDER_REQUIRED_CONFIG; do
+    if [[ ! -f "$CONFIG_DIR/$key" ]] || [[ -z "$(cat "$CONFIG_DIR/$key" 2>/dev/null)" ]]; then
+      echo "!     Missing required config: $key"
+      ((errors++))
+    fi
+  done
+
+  if [[ $errors -gt 0 ]]; then
+    echo ""
+    echo "       Run: dokku mail:aws:setup $SERVICE <domain>"
+    return 1
+  fi
+
+  # Validate AWS region format
+  local AWS_REGION
+  AWS_REGION=$(cat "$CONFIG_DIR/AWS_REGION" 2>/dev/null)
+  if [[ ! "$AWS_REGION" =~ ^[a-z]{2}-[a-z]+-[0-9]+$ ]]; then
+    echo "!     Invalid AWS_REGION format: $AWS_REGION"
+    return 1
+  fi
+
+  return 0
 }
 
 provider_verify() {

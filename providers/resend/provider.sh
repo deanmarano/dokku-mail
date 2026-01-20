@@ -38,7 +38,38 @@ provider_create_container() {
 }
 
 provider_get_smtp_port() {
+  local SERVICE="$1"
   echo "$PROVIDER_SMTP_PORT"
+}
+
+provider_validate_config() {
+  local SERVICE="$1"
+  local SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+  local CONFIG_DIR="$SERVICE_ROOT/provider-config"
+
+  local errors=0
+  for key in $PROVIDER_REQUIRED_CONFIG; do
+    if [[ ! -f "$CONFIG_DIR/$key" ]] || [[ -z "$(cat "$CONFIG_DIR/$key" 2>/dev/null)" ]]; then
+      echo "!     Missing required config: $key"
+      ((errors++))
+    fi
+  done
+
+  if [[ $errors -gt 0 ]]; then
+    echo ""
+    echo "       Run: dokku mail:resend:setup $SERVICE <domain>"
+    return 1
+  fi
+
+  # Validate API key format
+  local API_KEY
+  API_KEY=$(cat "$CONFIG_DIR/API_KEY" 2>/dev/null)
+  if [[ ! "$API_KEY" =~ ^re_ ]]; then
+    echo "!     Invalid API key format (should start with re_)"
+    return 1
+  fi
+
+  return 0
 }
 
 provider_verify() {

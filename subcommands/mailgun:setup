@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+# Skip command name if passed
+[[ "$1" == "mail:mailgun:setup" ]] && shift
+
+SERVICE="${1:-default}"
+DOMAIN="$2"
+API_KEY="$3"
+
+if [[ -z "$DOMAIN" ]]; then
+  echo "Usage: dokku mail:mailgun:setup <service> <domain> [api-key]"
+  echo ""
+  echo "Set up Mailgun as the mail provider"
+  echo ""
+  echo "Arguments:"
+  echo "  service    Mail service name (default: 'default')"
+  echo "  domain     Your Mailgun sending domain"
+  echo "  api-key    Mailgun API key (or will prompt)"
+  echo ""
+  echo "Options:"
+  echo "  --region=<region>    Mailgun region: us (default) or eu"
+  echo ""
+  echo "Requirements:"
+  echo "  - Mailgun account (https://mailgun.com)"
+  echo "  - Verified domain in Mailgun"
+  echo "  - API key from Mailgun dashboard"
+  echo ""
+  echo "Examples:"
+  echo "  dokku mail:mailgun:setup default mg.example.com"
+  echo "  dokku mail:mailgun:setup default mg.example.com key-abc123..."
+  echo "  dokku mail:mailgun:setup default mg.example.com --region=eu"
+  exit 1
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  echo "      Run: dokku mail:create $SERVICE"
+  exit 1
+fi
+
+# Parse options
+REGION="us"
+for arg in "$@"; do
+  case "$arg" in
+    --region=*)
+      REGION="${arg#*=}"
+      ;;
+  esac
+done
+
+# Check if already configured
+CURRENT_PROVIDER=$(cat "$SERVICE_ROOT/PROVIDER" 2>/dev/null || echo "")
+if [[ "$CURRENT_PROVIDER" == "mailgun" ]]; then
+  EXISTING_DOMAIN=$(cat "$SERVICE_ROOT/provider-config/DOMAIN" 2>/dev/null || echo "")
+  if [[ -n "$EXISTING_DOMAIN" ]]; then
+    echo "-----> Service $SERVICE is already configured for Mailgun"
+    echo "       Domain: $EXISTING_DOMAIN"
+    echo ""
+    echo "       To reconfigure, first run: dokku mail:provider:reset $SERVICE"
+    exit 0
+  fi
+fi
+
+# Prompt for API key if not provided
+if [[ -z "$API_KEY" ]]; then
+  echo "Enter your Mailgun API key:"
+  echo "(Find it at https://app.mailgun.com/app/account/security/api_keys)"
+  read -rs API_KEY
+  echo ""
+fi
+
+if [[ -z "$API_KEY" ]]; then
+  echo "!     API key is required"
+  exit 1
+fi
+
+echo "-----> Setting up Mailgun for $DOMAIN"
+
+# Determine endpoint based on region
+case "$REGION" in
+  eu|EU|europe|EUROPE)
+    REGION="eu"
+    API_BASE="https://api.eu.mailgun.net/v3"
+    SMTP_HOST="smtp.eu.mailgun.org"
+    echo "       Region: EU"
+    ;;
+  *)
+    REGION="us"
+    API_BASE="https://api.mailgun.net/v3"
+    SMTP_HOST="smtp.mailgun.org"
+    echo "       Region: US"
+    ;;
+esac
+
+# Verify API key and domain
+echo "-----> Verifying Mailgun credentials..."
+
+if command -v curl &>/dev/null; then
+  RESPONSE=$(curl -s -w "\n%{http_code}" \
+    --user "api:$API_KEY" \
+    "$API_BASE/domains/$DOMAIN" 2>/dev/null)
+
+  HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+  BODY=$(echo "$RESPONSE" | head -n -1)
+
+  case "$HTTP_CODE" in
+    200)
+      echo "       ✓ API key valid"
+      echo "       ✓ Domain $DOMAIN found"
+
+      # Check domain state if jq is available
+      if command -v jq &>/dev/null; then
+        STATE=$(echo "$BODY" | jq -r '.domain.state // "unknown"')
+        if [[ "$STATE" == "active" ]]; then
+          echo "       ✓ Domain is active"
+        else
+          echo "       ! Domain state: $STATE"
+          echo "         Verify DNS records in Mailgun dashboard"
+        fi
+      fi
+      ;;
+    401)
+      echo "!     Invalid API key"
+      echo "       Check your API key at: https://app.mailgun.com/app/account/security/api_keys"
+      exit 1
+      ;;
+    404)
+      echo "!     Domain $DOMAIN not found in Mailgun"
+      echo ""
+      echo "       Add the domain at: https://app.mailgun.com/app/sending/domains"
+      echo "       Then re-run this command"
+      exit 1
+      ;;
+    *)
+      echo "!     Failed to verify credentials (HTTP $HTTP_CODE)"
+      echo "       Continuing anyway..."
+      ;;
+  esac
+else
+  echo "       Skipping API verification (curl not installed)"
+fi
+
+# Test SMTP connectivity
+echo "-----> Testing SMTP connectivity..."
+if nc -z -w5 "$SMTP_HOST" 587 2>/dev/null; then
+  echo "       ✓ SMTP endpoint reachable"
+else
+  echo "!     Cannot connect to $SMTP_HOST:587"
+  echo "       Check your firewall settings"
+  exit 1
+fi
+
+# Save configuration
+echo "-----> Configuring mail service..."
+mkdir -p "$SERVICE_ROOT/provider-config"
+echo "mailgun" > "$SERVICE_ROOT/PROVIDER"
+echo "$API_KEY" > "$SERVICE_ROOT/provider-config/API_KEY"
+echo "$DOMAIN" > "$SERVICE_ROOT/provider-config/DOMAIN"
+echo "$REGION" > "$SERVICE_ROOT/provider-config/REGION"
+
+echo "-----> Applying provider configuration..."
+dokku mail:provider:apply "$SERVICE"
+
+echo ""
+echo "-----> Mailgun setup complete!"
+echo "       Domain: $DOMAIN"
+echo "       Region: $REGION"
+echo "       Service: $SERVICE"
+echo ""
+echo "       Test with: dokku mail:test $SERVICE your@email.com"

@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+# Skip command name if passed
+[[ "$1" == "mail:sendgrid:setup" ]] && shift
+
+SERVICE="${1:-default}"
+API_KEY="$2"
+
+if [[ "$SERVICE" == "--help" ]] || [[ "$SERVICE" == "-h" ]]; then
+  echo "Usage: dokku mail:sendgrid:setup <service> [api-key]"
+  echo ""
+  echo "Set up SendGrid as the mail provider"
+  echo ""
+  echo "Arguments:"
+  echo "  service    Mail service name (default: 'default')"
+  echo "  api-key    SendGrid API key (starts with SG.)"
+  echo ""
+  echo "Options:"
+  echo "  --domain=<domain>    Restrict sending to domain (default: *)"
+  echo ""
+  echo "Requirements:"
+  echo "  - SendGrid account (https://sendgrid.com)"
+  echo "  - API key with 'Mail Send' permission"
+  echo "  - Sender Identity verified (domain or single sender)"
+  echo ""
+  echo "To get an API key:"
+  echo "  1. Go to https://app.sendgrid.com/settings/api_keys"
+  echo "  2. Click 'Create API Key'"
+  echo "  3. Give it a name and select 'Restricted Access'"
+  echo "  4. Enable 'Mail Send' under 'Mail'"
+  echo ""
+  echo "Examples:"
+  echo "  dokku mail:sendgrid:setup default"
+  echo "  dokku mail:sendgrid:setup default SG.abc123..."
+  exit 0
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  echo "      Run: dokku mail:create $SERVICE"
+  exit 1
+fi
+
+# Parse options
+FROM_DOMAIN="*"
+for arg in "$@"; do
+  case "$arg" in
+    --domain=*)
+      FROM_DOMAIN="${arg#*=}"
+      ;;
+  esac
+done
+
+# Check if already configured
+CURRENT_PROVIDER=$(cat "$SERVICE_ROOT/PROVIDER" 2>/dev/null || echo "")
+if [[ "$CURRENT_PROVIDER" == "sendgrid" ]]; then
+  EXISTING_KEY=$(cat "$SERVICE_ROOT/provider-config/API_KEY" 2>/dev/null || echo "")
+  if [[ -n "$EXISTING_KEY" ]]; then
+    MASKED_KEY="${EXISTING_KEY:0:6}***${EXISTING_KEY: -4}"
+    echo "-----> Service $SERVICE is already configured for SendGrid"
+    echo "       API Key: $MASKED_KEY"
+    echo ""
+    echo "       To reconfigure, first run: dokku mail:provider:reset $SERVICE"
+    exit 0
+  fi
+fi
+
+# Prompt for API key if not provided
+if [[ -z "$API_KEY" ]]; then
+  echo "Enter your SendGrid API key (starts with SG.):"
+  echo "(Create one at https://app.sendgrid.com/settings/api_keys)"
+  read -rs API_KEY
+  echo ""
+fi
+
+if [[ -z "$API_KEY" ]]; then
+  echo "!     API key is required"
+  exit 1
+fi
+
+# Validate API key format
+if [[ ! "$API_KEY" =~ ^SG\. ]]; then
+  echo "!     Invalid API key format"
+  echo "       SendGrid API keys start with 'SG.'"
+  exit 1
+fi
+
+echo "-----> Setting up SendGrid for $SERVICE"
+
+# Verify API key
+echo "-----> Verifying SendGrid credentials..."
+
+if command -v curl &>/dev/null; then
+  RESPONSE=$(curl -s -w "\n%{http_code}" \
+    -H "Authorization: Bearer $API_KEY" \
+    "https://api.sendgrid.com/v3/user/profile" 2>/dev/null)
+
+  HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+  BODY=$(echo "$RESPONSE" | head -n -1)
+
+  case "$HTTP_CODE" in
+    200)
+      echo "       ✓ API key valid"
+      # Show account info if jq is available
+      if command -v jq &>/dev/null; then
+        EMAIL=$(echo "$BODY" | jq -r '.email // "unknown"')
+        echo "       Account: $EMAIL"
+      fi
+      ;;
+    401|403)
+      echo "!     Invalid API key or insufficient permissions"
+      echo "       Ensure the key has 'Mail Send' permission"
+      exit 1
+      ;;
+    *)
+      echo "       ? Could not verify API key (HTTP $HTTP_CODE)"
+      echo "       Continuing anyway..."
+      ;;
+  esac
+else
+  echo "       Skipping API verification (curl not installed)"
+fi
+
+# Test SMTP connectivity
+echo "-----> Testing SMTP connectivity..."
+if nc -z -w5 smtp.sendgrid.net 587 2>/dev/null; then
+  echo "       ✓ SMTP endpoint reachable"
+else
+  echo "!     Cannot connect to smtp.sendgrid.net:587"
+  echo "       Check your firewall settings"
+  exit 1
+fi
+
+# Save configuration
+echo "-----> Configuring mail service..."
+mkdir -p "$SERVICE_ROOT/provider-config"
+echo "sendgrid" > "$SERVICE_ROOT/PROVIDER"
+echo "$API_KEY" > "$SERVICE_ROOT/provider-config/API_KEY"
+echo "$FROM_DOMAIN" > "$SERVICE_ROOT/provider-config/FROM_DOMAIN"
+
+echo "-----> Applying provider configuration..."
+dokku mail:provider:apply "$SERVICE"
+
+echo ""
+echo "-----> SendGrid setup complete!"
+echo "       Service: $SERVICE"
+echo ""
+echo "       Important: Make sure you have a verified Sender Identity"
+echo "       https://app.sendgrid.com/settings/sender_auth"
+echo ""
+echo "       Test with: dokku mail:test $SERVICE your@email.com"
