@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # Common test utilities for dokku-mail BATS tests
 
-# Load bats helpers
-load 'bats-support/load'
-load 'bats-assert/load'
+# Determine the test helper directory
+TEST_HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load bats helpers using absolute paths
+load "${TEST_HELPER_DIR}/bats-support/load"
+load "${TEST_HELPER_DIR}/bats-assert/load"
 
 # Test configuration
 export TEST_SERVICE_PREFIX="test-mail-$$"
 export TEST_APP_PREFIX="test-app-$$"
-export PLUGIN_PATH="${BATS_TEST_DIRNAME}/../.."
+# Note: Don't export PLUGIN_PATH - it conflicts with dokku's internal variable
+MAIL_PLUGIN_PATH="${BATS_TEST_DIRNAME}/../.."
 export PLUGIN_DATA_ROOT="${PLUGIN_DATA_ROOT:-/var/lib/dokku/services/mail}"
 
 # Track created resources for cleanup
@@ -73,15 +77,18 @@ cleanup_all() {
 # CONTAINER HELPERS
 # =============================================================================
 
-# Wait for a container to be running
+# Wait for a service container to be running
 # Usage: wait_for_container <container_name> [timeout_seconds]
+# Note: Uses dokku to avoid docker permission issues
 wait_for_container() {
   local container="$1"
   local timeout="${2:-30}"
   local elapsed=0
+  local service="${container#dokku.mail.}"
 
   while [[ $elapsed -lt $timeout ]]; do
-    if docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
+    # Check via dokku mail:info which shows "running" status
+    if dokku mail:info "$service" 2>/dev/null | grep -q "Status: running"; then
       return 0
     fi
     sleep 1
@@ -91,18 +98,20 @@ wait_for_container() {
   return 1
 }
 
-# Check if container is running
+# Check if service container is running
 # Usage: container_is_running <container_name>
 container_is_running() {
   local container="$1"
-  docker ps --format '{{.Names}}' | grep -q "^${container}$"
+  local service="${container#dokku.mail.}"
+  dokku mail:info "$service" 2>/dev/null | grep -q "Status: running"
 }
 
 # Get container IP address
 # Usage: get_container_ip <container_name>
 get_container_ip() {
   local container="$1"
-  docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container" 2>/dev/null
+  local service="${container#dokku.mail.}"
+  dokku mail:info "$service" 2>/dev/null | grep "IP:" | awk '{print $2}'
 }
 
 # =============================================================================

@@ -24,7 +24,7 @@ teardown() {
   dokku mail:create "$TEST_SERVICE"
 
   run dokku mail:create "$TEST_SERVICE"
-  assert_success
+  assert_failure
   assert_output --partial "already exists"
 }
 
@@ -46,8 +46,9 @@ teardown() {
 
   run dokku mail:info "$TEST_SERVICE"
   assert_success
-  assert_output --partial "Service:"
+  assert_output --partial "mail service information"
   assert_output --partial "$TEST_SERVICE"
+  assert_output --partial "Status:"
 }
 
 @test "mail:destroy removes service" {

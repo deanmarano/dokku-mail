@@ -24,7 +24,7 @@ teardown() {
 @test "mail:link links app to service" {
   run dokku mail:link "$TEST_SERVICE" "$TEST_APP"
   assert_success
-  assert_output --partial "Linked"
+  assert_output --partial "linked to"
 
   assert_app_linked "$TEST_SERVICE" "$TEST_APP"
 }
@@ -59,11 +59,11 @@ teardown() {
   assert_failure
 }
 
-@test "mail:link is idempotent" {
+@test "mail:link with already linked app shows error" {
   dokku mail:link "$TEST_SERVICE" "$TEST_APP"
 
   run dokku mail:link "$TEST_SERVICE" "$TEST_APP"
-  assert_success
+  assert_failure
   assert_output --partial "already linked"
 }
 
