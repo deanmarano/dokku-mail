@@ -34,8 +34,8 @@ dokku mail:test default you@example.com
 | Provider | Best For | DNS Setup | API Validation |
 |----------|----------|-----------|----------------|
 | **Mock** | Development, testing | None required | No |
-| **AWS SES** | High volume, AWS users | Automated (Route53 or dokku-dns) | Yes (via AWS CLI) |
-| **Resend** | Simple API, good DX | Automated (with dokku-dns) | Yes |
+| **AWS SES** | High volume, AWS users | Automated (via dokku-dns) | Yes (via AWS CLI) |
+| **Resend** | Simple API, good DX | Automated (via dokku-dns) | Yes |
 | **Mailgun** | Established service | Manual | Yes |
 | **SendGrid** | Popular, reliable | Manual | Yes |
 | **SMTP** | Existing SMTP server | N/A | No |
@@ -46,15 +46,15 @@ dokku mail:test default you@example.com
 dokku plugin:install https://github.com/deanmarano/dokku-mail.git mail
 ```
 
-### Optional: dokku-dns for Automated DNS
+### Required: dokku-dns for DNS Automation
 
-For automated DNS record creation (DKIM, SPF, DMARC), install [dokku-dns](https://github.com/deanmarano/dokku-dns):
+The provider setup commands (`aws:setup`, `resend:setup`, etc.) require [dokku-dns](https://github.com/deanmarano/dokku-dns) for automated DNS record creation (DKIM, SPF, DMARC):
 
 ```bash
 dokku plugin:install https://github.com/deanmarano/dokku-dns.git dns
 ```
 
-Without dokku-dns, the AWS SES setup falls back to direct Route53 API calls. For other providers, DNS records must be added manually.
+Configure dokku-dns with your DNS provider (AWS Route53, Cloudflare, DigitalOcean, etc.) before running provider setup commands.
 
 ## Usage
 

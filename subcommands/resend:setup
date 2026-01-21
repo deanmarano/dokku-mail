@@ -19,12 +19,12 @@ if [[ -z "$DOMAIN" ]]; then
   echo ""
   echo "This command will:"
   echo "  - Add your domain to Resend"
-  echo "  - Configure DNS records in Route53"
+  echo "  - Configure DNS records via dokku-dns"
   echo "  - Set up the mail service"
   echo ""
   echo "Requirements:"
   echo "  - Resend API key (get from https://resend.com/api-keys)"
-  echo "  - Domain hosted in Route53"
+  echo "  - dokku-dns plugin installed and configured"
   echo "  - jq installed"
   echo ""
   echo "Example:"
@@ -45,6 +45,17 @@ fi
 if ! command -v jq &>/dev/null; then
   echo "!     jq not found. Please install it first."
   echo "      apt-get install jq"
+  exit 1
+fi
+
+# Check for dokku-dns
+if ! command -v dokku &>/dev/null || ! dokku dns:version &>/dev/null 2>&1; then
+  echo "!     dokku-dns plugin is required but not installed"
+  echo ""
+  echo "      Install it with:"
+  echo "        dokku plugin:install https://github.com/deanmarano/dokku-dns.git dns"
+  echo ""
+  echo "      Then configure a DNS provider for your domain."
   exit 1
 fi
 
@@ -128,131 +139,48 @@ if [[ "$RECORD_COUNT" -eq 0 ]]; then
   exit 1
 fi
 
-# Step 3: Check for dokku-dns or Route53
-USE_DOKKU_DNS=false
-if command -v dokku &>/dev/null && dokku dns:version &>/dev/null 2>&1; then
-  echo "-----> Using dokku-dns for DNS management"
-  USE_DOKKU_DNS=true
-else
-  echo "-----> Finding Route53 hosted zone for $DOMAIN..."
-  HOSTED_ZONE_ID=$(aws route53 list-hosted-zones --query "HostedZones[?Name=='${DOMAIN}.'].Id" --output text 2>/dev/null | sed 's|/hostedzone/||')
-fi
+# Step 3: Add DNS records via dokku-dns
+echo "-----> Adding DNS records via dokku-dns..."
 
-if [[ "$USE_DOKKU_DNS" == false ]] && [[ -z "$HOSTED_ZONE_ID" ]]; then
-  echo "!     No Route53 hosted zone found for $DOMAIN"
-  echo ""
-  echo "       Add these DNS records manually:"
-  echo "$DOMAIN_INFO" | jq -r '.records[] | "         \(.type) \(.name) -> \(.value)"'
-  echo ""
-  echo "       Tip: Install dokku-dns to use any DNS provider"
-  echo "       Then verify in Resend dashboard and re-run this command."
-else
-  if [[ "$USE_DOKKU_DNS" == false ]]; then
-    echo "       Found zone: $HOSTED_ZONE_ID"
+# Process each record using jq
+echo "$DOMAIN_INFO" | jq -c '.records[]' | while read -r record; do
+  TYPE=$(echo "$record" | jq -r '.type')
+  NAME=$(echo "$record" | jq -r '.name')
+  VALUE=$(echo "$record" | jq -r '.value')
+  TTL=$(echo "$record" | jq -r '.ttl // "Auto"')
+
+  [[ -z "$TYPE" ]] && continue
+  [[ -z "$NAME" ]] && continue
+
+  # Append domain to subdomain
+  FULL_NAME="${NAME}.${DOMAIN}"
+
+  # Handle TTL
+  if [[ "$TTL" == "Auto" ]] || [[ -z "$TTL" ]]; then
+    TTL=300
   fi
 
-  # Step 4: Add DNS records
-  echo "-----> Adding DNS records..."
+  echo "       Adding: $TYPE $FULL_NAME"
 
-  # Process each record using jq
-  echo "$DOMAIN_INFO" | jq -c '.records[]' | while read -r record; do
-    TYPE=$(echo "$record" | jq -r '.type')
-    NAME=$(echo "$record" | jq -r '.name')
-    VALUE=$(echo "$record" | jq -r '.value')
-    TTL=$(echo "$record" | jq -r '.ttl // "Auto"')
-
-    [[ -z "$TYPE" ]] && continue
-    [[ -z "$NAME" ]] && continue
-
-    # Append domain to subdomain
-    FULL_NAME="${NAME}.${DOMAIN}"
-
-    # Handle TTL
-    if [[ "$TTL" == "Auto" ]] || [[ -z "$TTL" ]]; then
-      TTL=300
-    fi
-
-    echo "       Adding: $TYPE $FULL_NAME"
-
-    if [[ "$USE_DOKKU_DNS" == true ]]; then
-      if dokku dns:records:create "$FULL_NAME" "$TYPE" "$VALUE" --ttl "$TTL" >/dev/null 2>&1; then
-        echo "         ✓ Added"
-      else
-        echo "         ✗ Failed to add"
-      fi
-    else
-      # Fallback to Route53 API
-      # For TXT records, wrap value in quotes
-      if [[ "$TYPE" == "TXT" ]]; then
-        VALUE="\"$VALUE\""
-      fi
-
-      # Build change batch JSON using jq
-      CHANGE_BATCH=$(jq -n \
-        --arg name "$FULL_NAME" \
-        --arg type "$TYPE" \
-        --argjson ttl "$TTL" \
-        --arg value "$VALUE" \
-        '{
-          Changes: [{
-            Action: "UPSERT",
-            ResourceRecordSet: {
-              Name: $name,
-              Type: $type,
-              TTL: $ttl,
-              ResourceRecords: [{Value: $value}]
-            }
-          }]
-        }')
-
-      if aws route53 change-resource-record-sets \
-        --hosted-zone-id "$HOSTED_ZONE_ID" \
-        --change-batch "$CHANGE_BATCH" >/dev/null 2>&1; then
-        echo "         ✓ Added"
-      else
-        echo "         ✗ Failed to add"
-      fi
-    fi
-  done
-
-  # Add DMARC record (recommended for email deliverability)
-  DMARC_NAME="_dmarc.${DOMAIN}"
-  DMARC_VALUE="v=DMARC1; p=none;"
-  echo "       Adding: TXT $DMARC_NAME (DMARC)"
-
-  if [[ "$USE_DOKKU_DNS" == true ]]; then
-    if dokku dns:records:create "$DMARC_NAME" TXT "$DMARC_VALUE" --ttl 300 >/dev/null 2>&1; then
-      echo "         ✓ Added"
-    else
-      echo "         ✗ Failed to add (may already exist)"
-    fi
+  if dokku dns:records:create "$FULL_NAME" "$TYPE" "$VALUE" --ttl "$TTL" >/dev/null 2>&1; then
+    echo "         ✓ Added"
   else
-    DMARC_BATCH=$(jq -n \
-      --arg name "$DMARC_NAME" \
-      --arg value "\"$DMARC_VALUE\"" \
-      '{
-        Changes: [{
-          Action: "UPSERT",
-          ResourceRecordSet: {
-            Name: $name,
-            Type: "TXT",
-            TTL: 300,
-            ResourceRecords: [{Value: $value}]
-          }
-        }]
-      }')
-
-    if aws route53 change-resource-record-sets \
-      --hosted-zone-id "$HOSTED_ZONE_ID" \
-      --change-batch "$DMARC_BATCH" >/dev/null 2>&1; then
-      echo "         ✓ Added"
-    else
-      echo "         ✗ Failed to add (may already exist)"
-    fi
+    echo "         ✗ Failed (may already exist)"
   fi
+done
 
-  echo "       DNS records added"
+# Step 4: Add DMARC record
+DMARC_NAME="_dmarc.${DOMAIN}"
+DMARC_VALUE="v=DMARC1; p=none;"
+echo "       Adding: TXT $DMARC_NAME (DMARC)"
+
+if dokku dns:records:create "$DMARC_NAME" TXT "$DMARC_VALUE" --ttl 300 >/dev/null 2>&1; then
+  echo "         ✓ Added"
+else
+  echo "         ✗ Failed (may already exist)"
 fi
+
+echo "       DNS records added"
 
 # Step 5: Verify domain (trigger verification check)
 echo "-----> Triggering domain verification..."

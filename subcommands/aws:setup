@@ -53,13 +53,13 @@ if [[ -z "$DOMAIN" ]]; then
   echo ""
   echo "Automatically set up AWS SES for a domain:"
   echo "  - Creates SES identity"
-  echo "  - Adds DKIM records to Route53"
+  echo "  - Adds DKIM and DMARC records via dokku-dns"
   echo "  - Creates SMTP credentials"
   echo "  - Configures the mail service"
   echo ""
   echo "Requirements:"
   echo "  - AWS CLI configured with appropriate permissions"
-  echo "  - Domain hosted in Route53"
+  echo "  - dokku-dns plugin installed and configured"
   echo ""
   echo "Example:"
   echo "  dokku mail:aws:setup default example.com us-east-1"
@@ -90,6 +90,17 @@ if [[ "$CURRENT_PROVIDER" == "aws" ]]; then
   fi
 fi
 
+# Check for dokku-dns
+if ! command -v dokku &>/dev/null || ! dokku dns:version &>/dev/null 2>&1; then
+  echo "!     dokku-dns plugin is required but not installed"
+  echo ""
+  echo "      Install it with:"
+  echo "        dokku plugin:install https://github.com/deanmarano/dokku-dns.git dns"
+  echo ""
+  echo "      Then configure a DNS provider for your domain."
+  exit 1
+fi
+
 # Check for AWS CLI
 if ! command -v aws &>/dev/null; then
   echo "!     AWS CLI not found. Please install it first."
@@ -107,27 +118,7 @@ fi
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
 echo "       Account: $AWS_ACCOUNT_ID"
 
-# Step 1: Check for dokku-dns or find Route53 hosted zone
-USE_DOKKU_DNS=false
-if command -v dokku &>/dev/null && dokku dns:version &>/dev/null 2>&1; then
-  echo "-----> Using dokku-dns for DNS management"
-  USE_DOKKU_DNS=true
-else
-  echo "-----> Finding Route53 hosted zone for $DOMAIN..."
-  HOSTED_ZONE_ID=$(aws route53 list-hosted-zones --query "HostedZones[?Name=='${DOMAIN}.'].Id" --output text | sed 's|/hostedzone/||')
-
-  if [[ -z "$HOSTED_ZONE_ID" ]]; then
-    echo "!     No Route53 hosted zone found for $DOMAIN"
-    echo "      Available zones:"
-    aws route53 list-hosted-zones --query 'HostedZones[*].Name' --output text | tr '\t' '\n' | sed 's/^/        /'
-    echo ""
-    echo "      Tip: Install dokku-dns to use any DNS provider"
-    exit 1
-  fi
-  echo "       Found zone: $HOSTED_ZONE_ID"
-fi
-
-# Step 2: Create SES identity
+# Step 1: Create SES identity
 echo "-----> Creating SES identity for $DOMAIN..."
 if aws sesv2 get-email-identity --email-identity "$DOMAIN" --region "$REGION" &>/dev/null; then
   echo "       Identity already exists, fetching DKIM records..."
@@ -136,7 +127,7 @@ else
   echo "       Identity created"
 fi
 
-# Step 3: Get DKIM records and status
+# Step 2: Get DKIM records and status
 echo "-----> Checking DKIM status..."
 DKIM_STATUS=$(aws sesv2 get-email-identity --email-identity "$DOMAIN" --region "$REGION" \
   --query 'DkimAttributes.DkimSigningEnabled' --output text)
@@ -152,85 +143,28 @@ if [[ -z "$DKIM_TOKENS" ]] || [[ "$DKIM_TOKENS" == "None" ]]; then
   exit 1
 fi
 
-# Step 4: Add DKIM records
-echo "-----> Adding DKIM records..."
+# Step 3: Add DKIM records via dokku-dns
+echo "-----> Adding DKIM records via dokku-dns..."
+for TOKEN in $DKIM_TOKENS; do
+  RECORD_NAME="${TOKEN}._domainkey.${DOMAIN}"
+  RECORD_VALUE="${TOKEN}.dkim.amazonses.com"
+  echo "       Creating: $RECORD_NAME"
+  if dokku dns:records:create "$RECORD_NAME" CNAME "$RECORD_VALUE" --ttl 300 >/dev/null 2>&1; then
+    echo "         ✓ Added"
+  else
+    echo "         ✗ Failed (may already exist)"
+  fi
+done
 
-if [[ "$USE_DOKKU_DNS" == true ]]; then
-  for TOKEN in $DKIM_TOKENS; do
-    RECORD_NAME="${TOKEN}._domainkey.${DOMAIN}"
-    RECORD_VALUE="${TOKEN}.dkim.amazonses.com"
-    echo "       Creating: $RECORD_NAME"
-    if dokku dns:records:create "$RECORD_NAME" CNAME "$RECORD_VALUE" --ttl 300 >/dev/null 2>&1; then
-      echo "         ✓ Added"
-    else
-      echo "         ✗ Failed"
-    fi
-  done
-else
-  # Fallback to direct Route53 API
-  CHANGES="["
-  FIRST=true
-  for TOKEN in $DKIM_TOKENS; do
-    if [[ "$FIRST" != true ]]; then
-      CHANGES="$CHANGES,"
-    fi
-    FIRST=false
-    CHANGES="$CHANGES
-    {
-      \"Action\": \"UPSERT\",
-      \"ResourceRecordSet\": {
-        \"Name\": \"${TOKEN}._domainkey.${DOMAIN}\",
-        \"Type\": \"CNAME\",
-        \"TTL\": 300,
-        \"ResourceRecords\": [{\"Value\": \"${TOKEN}.dkim.amazonses.com\"}]
-      }
-    }"
-    echo "       Ensuring: ${TOKEN}._domainkey.${DOMAIN}"
-  done
-  CHANGES="$CHANGES]"
-
-  aws route53 change-resource-record-sets \
-    --hosted-zone-id "$HOSTED_ZONE_ID" \
-    --change-batch "{\"Changes\": $CHANGES}" >/dev/null
-fi
-
-echo "       DKIM records added"
-
-# Add DMARC record (recommended for email deliverability)
+# Step 4: Add DMARC record
 DMARC_NAME="_dmarc.${DOMAIN}"
 DMARC_VALUE="v=DMARC1; p=none;"
 echo "-----> Adding DMARC record..."
 echo "       Creating: $DMARC_NAME"
-
-if [[ "$USE_DOKKU_DNS" == true ]]; then
-  if dokku dns:records:create "$DMARC_NAME" TXT "$DMARC_VALUE" --ttl 300 >/dev/null 2>&1; then
-    echo "         ✓ Added"
-  else
-    echo "         ✗ Failed (may already exist)"
-  fi
+if dokku dns:records:create "$DMARC_NAME" TXT "$DMARC_VALUE" --ttl 300 >/dev/null 2>&1; then
+  echo "         ✓ Added"
 else
-  DMARC_BATCH=$(jq -n \
-    --arg name "$DMARC_NAME" \
-    --arg value "\"$DMARC_VALUE\"" \
-    '{
-      Changes: [{
-        Action: "UPSERT",
-        ResourceRecordSet: {
-          Name: $name,
-          Type: "TXT",
-          TTL: 300,
-          ResourceRecords: [{Value: $value}]
-        }
-      }]
-    }')
-
-  if aws route53 change-resource-record-sets \
-    --hosted-zone-id "$HOSTED_ZONE_ID" \
-    --change-batch "$DMARC_BATCH" >/dev/null 2>&1; then
-    echo "         ✓ Added"
-  else
-    echo "         ✗ Failed (may already exist)"
-  fi
+  echo "         ✗ Failed (may already exist)"
 fi
 
 # Step 5: Create SMTP credentials
