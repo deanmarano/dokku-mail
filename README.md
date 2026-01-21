@@ -7,7 +7,7 @@ SMTP relay service plugin for [Dokku](https://dokku.com/). Provides outbound ema
 - **Multiple Providers**: AWS SES, Resend, Mailgun, SendGrid, Generic SMTP, or Mock (MailHog)
 - **Simple Linking**: Apps get `SMTP_HOST`, `SMTP_PORT`, and `MAIL_URL` environment variables automatically
 - **Network-based**: Uses Docker networks for stable connections that survive reboots
-- **Custom Vars**: Built-in templates for popular apps (lldap, authelia, nextcloud, gitea, gitlab)
+- **Custom Vars**: Configurable env var mappings with built-in templates
 - **Unified Interface**: Same commands work across all providers
 - **Built-in Diagnostics**: Health checks, status monitoring, and troubleshooting tools
 
