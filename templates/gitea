@@ -1,0 +1,5 @@
+GITEA__mailer__ENABLED=true
+GITEA__mailer__PROTOCOL=smtp
+GITEA__mailer__SMTP_ADDR=%HOST%
+GITEA__mailer__SMTP_PORT=%PORT%
+GITEA__mailer__FROM=gitea@%DOMAIN%
