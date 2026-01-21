@@ -22,11 +22,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install dokku
+        run: |
+          wget -NP . https://dokku.com/install/v0.35.15/bootstrap.sh
+          sudo DOKKU_TAG=v0.35.15 bash bootstrap.sh
 
       - name: Install bats
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bats
+        run: sudo apt-get update && sudo apt-get install -y bats
 
-      - name: Run unit tests
-        run: make test-unit
+      - name: Install plugin
+        run: sudo dokku plugin:install file://${{ github.workspace }} mail
+
+      - name: Run integration tests
+        run: make test-integration
