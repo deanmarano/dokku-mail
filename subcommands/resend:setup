@@ -215,6 +215,42 @@ else
     fi
   done
 
+  # Add DMARC record (recommended for email deliverability)
+  DMARC_NAME="_dmarc.${DOMAIN}"
+  DMARC_VALUE="v=DMARC1; p=none;"
+  echo "       Adding: TXT $DMARC_NAME (DMARC)"
+
+  if [[ "$USE_DOKKU_DNS" == true ]]; then
+    if dokku dns:records:create "$DMARC_NAME" TXT "$DMARC_VALUE" --ttl 300 >/dev/null 2>&1; then
+      echo "         ✓ Added"
+    else
+      echo "         ✗ Failed to add (may already exist)"
+    fi
+  else
+    DMARC_BATCH=$(jq -n \
+      --arg name "$DMARC_NAME" \
+      --arg value "\"$DMARC_VALUE\"" \
+      '{
+        Changes: [{
+          Action: "UPSERT",
+          ResourceRecordSet: {
+            Name: $name,
+            Type: "TXT",
+            TTL: 300,
+            ResourceRecords: [{Value: $value}]
+          }
+        }]
+      }')
+
+    if aws route53 change-resource-record-sets \
+      --hosted-zone-id "$HOSTED_ZONE_ID" \
+      --change-batch "$DMARC_BATCH" >/dev/null 2>&1; then
+      echo "         ✓ Added"
+    else
+      echo "         ✗ Failed to add (may already exist)"
+    fi
+  fi
+
   echo "       DNS records added"
 fi
 
