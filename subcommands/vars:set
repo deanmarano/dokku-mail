@@ -52,9 +52,6 @@ if [[ "$1" == "--template="* ]]; then
       rm -f "$APP_VARS_FILE"
       echo "-----> Cleared all custom vars for $APP (will use defaults only)"
       ;;
-    default)
-      TEMPLATE="rails"
-      ;&  # fallthrough
     *)
       # Check if template file exists
       if [[ -f "$TEMPLATES_DIR/$TEMPLATE" ]]; then
