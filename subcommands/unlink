@@ -34,8 +34,32 @@ fi
 
 echo "-----> Unlinking $APP from mail service $SERVICE"
 
+# Build list of variables to unset
+UNSET_VARS=(SMTP_HOST SMTP_PORT MAIL_URL)
+
+# Add app-specific variables for known apps
+case "$APP" in
+  lldap)
+    UNSET_VARS+=(
+      LLDAP_SMTP_OPTIONS__SERVER
+      LLDAP_SMTP_OPTIONS__PORT
+      LLDAP_SMTP_OPTIONS__SMTP_ENCRYPTION
+      LLDAP_SMTP_OPTIONS__ENABLE_PASSWORD_RESET
+      LLDAP_SMTP_OPTIONS__FROM
+    )
+    ;;
+  authelia)
+    UNSET_VARS+=(
+      AUTHELIA_NOTIFIER_SMTP_HOST
+      AUTHELIA_NOTIFIER_SMTP_PORT
+      AUTHELIA_NOTIFIER_SMTP_DISABLE_REQUIRE_TLS
+      AUTHELIA_NOTIFIER_SMTP_SENDER
+    )
+    ;;
+esac
+
 # Remove environment variables from the app
-dokku config:unset --no-restart "$APP" SMTP_HOST SMTP_PORT MAIL_URL || true
+dokku config:unset --no-restart "$APP" "${UNSET_VARS[@]}" || true
 
 # Remove from links file
 grep -v "^$APP$" "$SERVICE_ROOT/LINKS" > "$SERVICE_ROOT/LINKS.tmp" || true

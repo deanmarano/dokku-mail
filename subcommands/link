@@ -35,11 +35,23 @@ if ! dokku apps:exists "$APP" 2>/dev/null; then
   exit 1
 fi
 
-# Check if already linked
+# Check if already linked to THIS service
 if grep -q "^$APP$" "$SERVICE_ROOT/LINKS" 2>/dev/null; then
   echo "!     App $APP is already linked to $SERVICE"
   exit 1
 fi
+
+# Check if linked to ANY other mail service and unlink first
+for other_service_dir in "$PLUGIN_DATA_ROOT"/*/; do
+  other_service=$(basename "$other_service_dir")
+  [[ "$other_service" == "$SERVICE" ]] && continue
+  if grep -q "^$APP$" "$other_service_dir/LINKS" 2>/dev/null; then
+    echo "-----> Unlinking $APP from existing mail service $other_service"
+    # Remove from other service's links
+    grep -v "^$APP$" "$other_service_dir/LINKS" > "$other_service_dir/LINKS.tmp" || true
+    mv "$other_service_dir/LINKS.tmp" "$other_service_dir/LINKS"
+  fi
+done
 
 # Load provider to get SMTP port
 load_provider "$SERVICE"
@@ -53,17 +65,53 @@ if [[ -z "$CONTAINER_IP" ]]; then
   exit 1
 fi
 
+# Get sender domain from provider config if available
+SENDER_DOMAIN=""
+if [[ -f "$SERVICE_ROOT/provider-config/SENDER_DOMAIN" ]]; then
+  SENDER_DOMAIN=$(cat "$SERVICE_ROOT/provider-config/SENDER_DOMAIN")
+fi
+
 echo "-----> Linking $APP to mail service $SERVICE"
 echo "-----> Setting config vars"
 echo "       MAIL_URL:   smtp://$CONTAINER_IP:$SMTP_PORT"
 echo "       SMTP_HOST:  $CONTAINER_IP"
 echo "       SMTP_PORT:  $SMTP_PORT"
 
+# Build config vars
+CONFIG_VARS=(
+  "SMTP_HOST=$CONTAINER_IP"
+  "SMTP_PORT=$SMTP_PORT"
+  "MAIL_URL=smtp://$CONTAINER_IP:$SMTP_PORT"
+)
+
+# Add app-specific SMTP config for known apps
+APP_UPPER=$(echo "$APP" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+case "$APP" in
+  lldap)
+    CONFIG_VARS+=("LLDAP_SMTP_OPTIONS__SERVER=$CONTAINER_IP")
+    CONFIG_VARS+=("LLDAP_SMTP_OPTIONS__PORT=$SMTP_PORT")
+    CONFIG_VARS+=("LLDAP_SMTP_OPTIONS__SMTP_ENCRYPTION=NONE")
+    CONFIG_VARS+=("LLDAP_SMTP_OPTIONS__ENABLE_PASSWORD_RESET=true")
+    if [[ -n "$SENDER_DOMAIN" ]]; then
+      CONFIG_VARS+=("LLDAP_SMTP_OPTIONS__FROM=lldap@$SENDER_DOMAIN")
+      echo "       LLDAP_SMTP_OPTIONS__FROM: lldap@$SENDER_DOMAIN"
+    fi
+    echo "       LLDAP_SMTP_OPTIONS__SERVER: $CONTAINER_IP"
+    ;;
+  authelia)
+    CONFIG_VARS+=("AUTHELIA_NOTIFIER_SMTP_HOST=$CONTAINER_IP")
+    CONFIG_VARS+=("AUTHELIA_NOTIFIER_SMTP_PORT=$SMTP_PORT")
+    CONFIG_VARS+=("AUTHELIA_NOTIFIER_SMTP_DISABLE_REQUIRE_TLS=true")
+    if [[ -n "$SENDER_DOMAIN" ]]; then
+      CONFIG_VARS+=("AUTHELIA_NOTIFIER_SMTP_SENDER=authelia@$SENDER_DOMAIN")
+      echo "       AUTHELIA_NOTIFIER_SMTP_SENDER: authelia@$SENDER_DOMAIN"
+    fi
+    echo "       AUTHELIA_NOTIFIER_SMTP_HOST: $CONTAINER_IP"
+    ;;
+esac
+
 # Set environment variables on the app
-dokku config:set --no-restart "$APP" \
-  SMTP_HOST="$CONTAINER_IP" \
-  SMTP_PORT="$SMTP_PORT" \
-  MAIL_URL="smtp://$CONTAINER_IP:$SMTP_PORT" >/dev/null
+dokku config:set --no-restart "$APP" "${CONFIG_VARS[@]}" >/dev/null
 
 # Record the link
 echo "$APP" >> "$SERVICE_ROOT/LINKS"
