@@ -26,7 +26,7 @@ teardown() {
   assert container_is_running "dokku.mail.$TEST_SERVICE"
 }
 
-@test "mock provider exposes SMTP on port 1025" {
+@test "mock provider exposes SMTP on port 25" {
   dokku mail:provider:apply "$TEST_SERVICE"
   wait_for_container "dokku.mail.$TEST_SERVICE" 10
 
@@ -34,7 +34,7 @@ teardown() {
   container_ip=$(get_container_ip "dokku.mail.$TEST_SERVICE")
 
   # Check SMTP port is open
-  run smtp_port_open "$container_ip" 1025
+  run smtp_port_open "$container_ip" 25
   assert_success
 }
 
@@ -50,7 +50,7 @@ teardown() {
   run dokku mail:provider:info "$TEST_SERVICE"
   assert_success
   assert_output --partial "Mock (MailHog)"
-  assert_output --partial "1025"
+  assert_output --partial "SMTP Port: 25"
 }
 
 @test "mock provider validates config (no-op)" {
@@ -68,6 +68,6 @@ teardown() {
   local container_ip
   container_ip=$(get_container_ip "dokku.mail.$TEST_SERVICE")
 
-  run send_test_email "$container_ip" 1025 "test@example.com" "recipient@example.com"
+  run send_test_email "$container_ip" 25 "test@example.com" "recipient@example.com"
   assert_success
 }
