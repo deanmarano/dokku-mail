@@ -27,6 +27,7 @@ show_help() {
   echo -e "    mail:link <service> <app>                         \033[2;37mlink the mail service to the app\033[m"
   echo -e "    mail:list                                         \033[2;37mlist all mail services\033[m"
   echo -e "    mail:logs <service> [-t|--tail]                   \033[2;37mprint the most recent log(s) for this service\033[m"
+  echo -e "    mail:status <service> [-q|--quiet]                \033[2;37mshow service status (exit: 0=healthy, 1=degraded, 2=down)\033[m"
   echo -e "    mail:test <service> <to-address>                  \033[2;37msend a test email\033[m"
   echo -e "    mail:unlink <service> <app>                       \033[2;37munlink the mail service from the app\033[m"
   echo ""

@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+source "$PLUGIN_BASE_PATH/providers/loader.sh"
+
+# Skip command name if passed
+[[ "$1" == "mail:status" ]] && shift
+
+SERVICE="${1:-default}"
+QUIET=false
+
+# Parse flags
+for arg in "$@"; do
+  case "$arg" in
+    -q|--quiet)
+      QUIET=true
+      ;;
+  esac
+done
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+CONTAINER_NAME="dokku.mail.$SERVICE"
+
+# Exit codes
+EXIT_HEALTHY=0
+EXIT_DEGRADED=1
+EXIT_DOWN=2
+
+# Check if service exists
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  [[ "$QUIET" == false ]] && echo "down: service not found"
+  exit $EXIT_DOWN
+fi
+
+# Check container status
+CONTAINER_RUNNING=false
+if docker ps -q -f "name=^${CONTAINER_NAME}$" | grep -q .; then
+  CONTAINER_RUNNING=true
+  CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME" 2>/dev/null || echo "")
+fi
+
+# Get provider
+PROVIDER=$(cat "$SERVICE_ROOT/PROVIDER" 2>/dev/null || echo "mock")
+
+# Determine overall status
+if [[ "$CONTAINER_RUNNING" == false ]]; then
+  STATUS="down"
+  EXIT_CODE=$EXIT_DOWN
+elif [[ -z "$CONTAINER_IP" ]]; then
+  STATUS="degraded"
+  EXIT_CODE=$EXIT_DEGRADED
+else
+  # Check provider-specific health
+  load_provider "$SERVICE"
+
+  # Quick connectivity check
+  SMTP_PORT=$(provider_get_smtp_port "$SERVICE" 2>/dev/null || echo "25")
+
+  if nc -z -w2 "$CONTAINER_IP" "$SMTP_PORT" 2>/dev/null; then
+    STATUS="healthy"
+    EXIT_CODE=$EXIT_HEALTHY
+  else
+    STATUS="degraded"
+    EXIT_CODE=$EXIT_DEGRADED
+  fi
+fi
+
+if [[ "$QUIET" == true ]]; then
+  echo "$STATUS"
+else
+  echo "$STATUS: service=$SERVICE provider=$PROVIDER container=$CONTAINER_RUNNING"
+
+  if [[ "$CONTAINER_RUNNING" == true ]]; then
+    # Count linked apps
+    LINKED_APPS=0
+    if [[ -f "$SERVICE_ROOT/LINKS" ]]; then
+      LINKED_APPS=$(wc -l < "$SERVICE_ROOT/LINKS" 2>/dev/null | tr -d ' ')
+    fi
+    echo "  container_ip=$CONTAINER_IP smtp_port=$SMTP_PORT linked_apps=$LINKED_APPS"
+  fi
+fi
+
+exit $EXIT_CODE
