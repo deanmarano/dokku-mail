@@ -17,15 +17,15 @@ if [[ -z "$APP" ]] || [[ $# -eq 0 ]]; then
   echo "Set custom environment variable mappings for an app"
   echo ""
   echo "Placeholders available in values:"
-  echo "  {{HOST}}   - SMTP container IP address"
-  echo "  {{PORT}}   - SMTP port"
-  echo "  {{DOMAIN}} - Sender domain (if configured)"
-  echo "  {{APP}}    - App name"
+  echo "  %HOST%   - SMTP container IP address"
+  echo "  %PORT%   - SMTP port"
+  echo "  %DOMAIN% - Sender domain (if configured)"
+  echo "  %APP%    - App name"
   echo ""
   echo "Examples:"
-  echo "  dokku mail:vars:set myapp MAILER_HOST={{HOST}}"
-  echo "  dokku mail:vars:set myapp MAILER_DSN=smtp://{{HOST}}:{{PORT}}"
-  echo "  dokku mail:vars:set myapp EMAIL_FROM=noreply@{{DOMAIN}}"
+  echo "  dokku mail:vars:set myapp MAILER_HOST=%HOST%"
+  echo "  dokku mail:vars:set myapp MAILER_DSN=smtp://%HOST%:%PORT%"
+  echo "  dokku mail:vars:set myapp EMAIL_FROM=noreply@%DOMAIN%"
   echo ""
   echo "Built-in templates:"
   echo "  dokku mail:vars:set myapp --template=lldap"
@@ -48,30 +48,30 @@ if [[ "$1" == "--template="* ]]; then
   case "$TEMPLATE" in
     lldap)
       cat > "$APP_VARS_FILE" <<'EOF'
-LLDAP_SMTP_OPTIONS__SERVER={{HOST}}
-LLDAP_SMTP_OPTIONS__PORT={{PORT}}
+LLDAP_SMTP_OPTIONS__SERVER=%HOST%
+LLDAP_SMTP_OPTIONS__PORT=%PORT%
 LLDAP_SMTP_OPTIONS__SMTP_ENCRYPTION=NONE
 LLDAP_SMTP_OPTIONS__ENABLE_PASSWORD_RESET=true
-LLDAP_SMTP_OPTIONS__FROM=lldap@{{DOMAIN}}
+LLDAP_SMTP_OPTIONS__FROM=lldap@%DOMAIN%
 EOF
       echo "-----> Applied lldap template for $APP"
       ;;
     authelia)
       cat > "$APP_VARS_FILE" <<'EOF'
-AUTHELIA_NOTIFIER_SMTP_HOST={{HOST}}
-AUTHELIA_NOTIFIER_SMTP_PORT={{PORT}}
+AUTHELIA_NOTIFIER_SMTP_HOST=%HOST%
+AUTHELIA_NOTIFIER_SMTP_PORT=%PORT%
 AUTHELIA_NOTIFIER_SMTP_DISABLE_REQUIRE_TLS=true
-AUTHELIA_NOTIFIER_SMTP_SENDER=authelia@{{DOMAIN}}
+AUTHELIA_NOTIFIER_SMTP_SENDER=authelia@%DOMAIN%
 EOF
       echo "-----> Applied authelia template for $APP"
       ;;
     nextcloud)
       cat > "$APP_VARS_FILE" <<'EOF'
-SMTP_HOST={{HOST}}
-SMTP_PORT={{PORT}}
+SMTP_HOST=%HOST%
+SMTP_PORT=%PORT%
 SMTP_SECURE=
 MAIL_FROM_ADDRESS=nextcloud
-MAIL_DOMAIN={{DOMAIN}}
+MAIL_DOMAIN=%DOMAIN%
 EOF
       echo "-----> Applied nextcloud template for $APP"
       ;;
@@ -79,24 +79,24 @@ EOF
       cat > "$APP_VARS_FILE" <<'EOF'
 GITEA__mailer__ENABLED=true
 GITEA__mailer__PROTOCOL=smtp
-GITEA__mailer__SMTP_ADDR={{HOST}}
-GITEA__mailer__SMTP_PORT={{PORT}}
-GITEA__mailer__FROM=gitea@{{DOMAIN}}
+GITEA__mailer__SMTP_ADDR=%HOST%
+GITEA__mailer__SMTP_PORT=%PORT%
+GITEA__mailer__FROM=gitea@%DOMAIN%
 EOF
       echo "-----> Applied gitea template for $APP"
       ;;
     gitlab)
       cat > "$APP_VARS_FILE" <<'EOF'
-GITLAB_OMNIBUS_CONFIG=gitlab_rails['smtp_enable'] = true; gitlab_rails['smtp_address'] = "{{HOST}}"; gitlab_rails['smtp_port'] = {{PORT}}; gitlab_rails['smtp_domain'] = "{{DOMAIN}}"; gitlab_rails['gitlab_email_from'] = "gitlab@{{DOMAIN}}"
+GITLAB_OMNIBUS_CONFIG=gitlab_rails['smtp_enable'] = true; gitlab_rails['smtp_address'] = "%HOST%"; gitlab_rails['smtp_port'] = %PORT%; gitlab_rails['smtp_domain'] = "%DOMAIN%"; gitlab_rails['gitlab_email_from'] = "gitlab@%DOMAIN%"
 EOF
       echo "-----> Applied gitlab template for $APP"
       ;;
     rails|default)
       cat > "$APP_VARS_FILE" <<'EOF'
-SMTP_ADDRESS={{HOST}}
-SMTP_PORT={{PORT}}
-SMTP_DOMAIN={{DOMAIN}}
-MAILER_FROM=noreply@{{DOMAIN}}
+SMTP_ADDRESS=%HOST%
+SMTP_PORT=%PORT%
+SMTP_DOMAIN=%DOMAIN%
+MAILER_FROM=noreply@%DOMAIN%
 EOF
       echo "-----> Applied rails/default template for $APP"
       ;;
@@ -124,6 +124,11 @@ for arg in "$@"; do
 
   KEY="${arg%%=*}"
   VALUE="${arg#*=}"
+
+  # Strip surrounding quotes if present (handles user escaping)
+  if [[ "$VALUE" =~ ^\"(.*)\"$ ]] || [[ "$VALUE" =~ ^\'(.*)\'$ ]]; then
+    VALUE="${BASH_REMATCH[1]}"
+  fi
 
   # Remove existing line with this key if present
   if [[ -f "$APP_VARS_FILE" ]]; then

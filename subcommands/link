@@ -82,10 +82,10 @@ echo "-----> Linking $APP to mail service $SERVICE"
 # Function to expand placeholders in a value
 expand_placeholders() {
   local value="$1"
-  value="${value//\{\{HOST\}\}/$CONTAINER_IP}"
-  value="${value//\{\{PORT\}\}/$SMTP_PORT}"
-  value="${value//\{\{DOMAIN\}\}/$SENDER_DOMAIN}"
-  value="${value//\{\{APP\}\}/$APP}"
+  value="${value//%HOST%/$CONTAINER_IP}"
+  value="${value//%PORT%/$SMTP_PORT}"
+  value="${value//%DOMAIN%/$SENDER_DOMAIN}"
+  value="${value//%APP%/$APP}"
   echo "$value"
 }
 

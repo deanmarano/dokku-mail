@@ -27,9 +27,9 @@ if [[ -z "$APP" ]]; then
   fi
   echo ""
   echo "Default vars (always set for all apps):"
-  echo "  SMTP_HOST={{HOST}}"
-  echo "  SMTP_PORT={{PORT}}"
-  echo "  MAIL_URL=smtp://{{HOST}}:{{PORT}}"
+  echo "  SMTP_HOST=%HOST%"
+  echo "  SMTP_PORT=%PORT%"
+  echo "  MAIL_URL=smtp://%HOST%:%PORT%"
   exit 0
 fi
 
@@ -38,9 +38,9 @@ APP_VARS_FILE="$VARS_DIR/$APP"
 echo "-----> Environment variables for $APP"
 echo ""
 echo "Default vars (always set):"
-echo "  SMTP_HOST={{HOST}}"
-echo "  SMTP_PORT={{PORT}}"
-echo "  MAIL_URL=smtp://{{HOST}}:{{PORT}}"
+echo "  SMTP_HOST=%HOST%"
+echo "  SMTP_PORT=%PORT%"
+echo "  MAIL_URL=smtp://%HOST%:%PORT%"
 echo ""
 
 if [[ -f "$APP_VARS_FILE" ]]; then
