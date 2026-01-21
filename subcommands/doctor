@@ -9,7 +9,28 @@ source "$PLUGIN_BASE_PATH/providers/loader.sh"
 # Skip command name if passed
 [[ "$1" == "mail:doctor" ]] && shift
 
-SERVICE="${1:-default}"
+SERVICE=""
+VERBOSE=false
+
+# Parse arguments
+for arg in "$@"; do
+  case "$arg" in
+    -v|--verbose)
+      VERBOSE=true
+      ;;
+    -*)
+      echo "Unknown option: $arg"
+      exit 1
+      ;;
+    *)
+      if [[ -z "$SERVICE" ]]; then
+        SERVICE="$arg"
+      fi
+      ;;
+  esac
+done
+
+SERVICE="${SERVICE:-default}"
 
 SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
 CONTAINER_NAME="dokku.mail.$SERVICE"
@@ -29,6 +50,12 @@ check_fail() {
 check_warn() {
   echo "       ! $1"
   ((WARNINGS++)) || true
+}
+
+verbose() {
+  if [[ "$VERBOSE" == true ]]; then
+    echo "       [verbose] $1"
+  fi
 }
 
 echo "=====> Running diagnostics for mail service: $SERVICE"
@@ -52,8 +79,18 @@ if docker ps -q -f "name=^${CONTAINER_NAME}$" | grep -q .; then
 
   CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME")
   check_pass "Container IP: $CONTAINER_IP"
+
+  if [[ "$VERBOSE" == true ]]; then
+    CONTAINER_IMAGE=$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_NAME" 2>/dev/null || echo "unknown")
+    CONTAINER_CREATED=$(docker inspect -f '{{.Created}}' "$CONTAINER_NAME" 2>/dev/null | cut -d'T' -f1 || echo "unknown")
+    CONTAINER_RESTART=$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$CONTAINER_NAME" 2>/dev/null || echo "unknown")
+    verbose "Image: $CONTAINER_IMAGE"
+    verbose "Created: $CONTAINER_CREATED"
+    verbose "Restart policy: $CONTAINER_RESTART"
+  fi
 else
   check_fail "Container is not running"
+  verbose "Try: dokku mail:provider:apply $SERVICE"
 fi
 
 # 3. Provider configuration
@@ -61,11 +98,28 @@ echo "-----> Checking provider..."
 PROVIDER=$(cat "$SERVICE_ROOT/PROVIDER" 2>/dev/null || echo "")
 if [[ -n "$PROVIDER" ]]; then
   check_pass "Provider: $PROVIDER"
+  verbose "Provider path: $PLUGIN_BASE_PATH/providers/$PROVIDER/provider.sh"
 else
   check_fail "No provider configured"
 fi
 
 load_provider "$SERVICE"
+
+if [[ "$VERBOSE" == true ]] && [[ -d "$SERVICE_ROOT/provider-config" ]]; then
+  verbose "Config directory: $SERVICE_ROOT/provider-config"
+  for config_file in "$SERVICE_ROOT/provider-config"/*; do
+    if [[ -f "$config_file" ]]; then
+      key=$(basename "$config_file")
+      # Mask sensitive values
+      if [[ "$key" == *PASSWORD* ]] || [[ "$key" == *KEY* ]] || [[ "$key" == *SECRET* ]]; then
+        verbose "  $key: ****"
+      else
+        value=$(cat "$config_file" 2>/dev/null || echo "")
+        verbose "  $key: $value"
+      fi
+    fi
+  done
+fi
 
 # 4. Provider-specific checks
 if type provider_doctor &>/dev/null; then

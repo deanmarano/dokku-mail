@@ -22,7 +22,7 @@ show_help() {
   echo ""
   echo -e "    mail:create <service>                             \033[2;37mcreate a mail relay service\033[m"
   echo -e "    mail:destroy <service> [-f|--force]               \033[2;37mdelete the mail service/container\033[m"
-  echo -e "    mail:doctor <service>                             \033[2;37mrun diagnostics and check for issues\033[m"
+  echo -e "    mail:doctor <service> [-v|--verbose]             \033[2;37mrun diagnostics and check for issues\033[m"
   echo -e "    mail:info <service>                               \033[2;37mprint the service information\033[m"
   echo -e "    mail:link <service> <app>                         \033[2;37mlink the mail service to the app\033[m"
   echo -e "    mail:list                                         \033[2;37mlist all mail services\033[m"
