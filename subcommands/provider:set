@@ -66,6 +66,7 @@ echo ""
 echo "       Next steps:"
 
 # Load provider to show required config
+# shellcheck source=/dev/null
 source "$PLUGIN_BASE_PATH/providers/$PROVIDER/provider.sh"
 if [[ -n "$PROVIDER_REQUIRED_CONFIG" ]]; then
   echo "       Configure required settings:"

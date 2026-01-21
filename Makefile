@@ -48,7 +48,7 @@ shellcheck:
 	@echo "Running shellcheck..."
 	@shellcheck -x commands config install
 	@shellcheck -x subcommands/*
-	@shellcheck -x providers/*/provider.sh
+	@shellcheck -x -e SC2034 providers/*/provider.sh
 	@echo "Shellcheck passed!"
 
 # Install plugin for local development

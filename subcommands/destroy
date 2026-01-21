@@ -38,10 +38,12 @@ if [[ ! -d "$SERVICE_ROOT" ]]; then
 fi
 
 # Check for linked apps
-LINKS=$(cat "$SERVICE_ROOT/LINKS" 2>/dev/null | grep -v '^$' || true)
+LINKS=$(grep -v '^$' "$SERVICE_ROOT/LINKS" 2>/dev/null || true)
 if [[ -n "$LINKS" ]] && [[ -z "$FORCE" ]]; then
   echo "!     Service $SERVICE still has linked apps:"
-  echo "$LINKS" | sed 's/^/       /'
+  while IFS= read -r app; do
+    echo "       $app"
+  done <<< "$LINKS"
   echo ""
   echo "       Unlink apps first or use --force"
   exit 1

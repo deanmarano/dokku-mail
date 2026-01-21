@@ -129,8 +129,6 @@ fi
 
 # Step 2: Get DKIM records and status
 echo "-----> Checking DKIM status..."
-DKIM_STATUS=$(aws sesv2 get-email-identity --email-identity "$DOMAIN" --region "$REGION" \
-  --query 'DkimAttributes.DkimSigningEnabled' --output text)
 DKIM_VERIFICATION=$(aws sesv2 get-email-identity --email-identity "$DOMAIN" --region "$REGION" \
   --query 'DkimAttributes.Status' --output text)
 DKIM_TOKENS=$(aws sesv2 get-email-identity --email-identity "$DOMAIN" --region "$REGION" \

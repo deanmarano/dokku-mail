@@ -57,7 +57,9 @@ fi
 echo ""
 echo "       Linked apps:"
 if [[ -f "$SERVICE_ROOT/LINKS" ]] && [[ -s "$SERVICE_ROOT/LINKS" ]]; then
-  cat "$SERVICE_ROOT/LINKS" | sed 's/^/         /'
+  while IFS= read -r app; do
+    [[ -n "$app" ]] && echo "         $app"
+  done < "$SERVICE_ROOT/LINKS"
 else
   echo "         (none)"
 fi
