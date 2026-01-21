@@ -1,5 +1,7 @@
 [plugin]
 description = "SMTP relay service for dokku apps"
-version = "0.1.0"
+version = "1.0.0"
+authors = ["Dean Marano"]
+license = "MIT"
 
 [plugin.config]

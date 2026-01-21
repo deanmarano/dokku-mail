@@ -128,23 +128,31 @@ if [[ "$RECORD_COUNT" -eq 0 ]]; then
   exit 1
 fi
 
-# Step 3: Find Route53 hosted zone
-echo "-----> Finding Route53 hosted zone for $DOMAIN..."
-HOSTED_ZONE_ID=$(aws route53 list-hosted-zones --query "HostedZones[?Name=='${DOMAIN}.'].Id" --output text 2>/dev/null | sed 's|/hostedzone/||')
+# Step 3: Check for dokku-dns or Route53
+USE_DOKKU_DNS=false
+if command -v dokku &>/dev/null && dokku dns:version &>/dev/null 2>&1; then
+  echo "-----> Using dokku-dns for DNS management"
+  USE_DOKKU_DNS=true
+else
+  echo "-----> Finding Route53 hosted zone for $DOMAIN..."
+  HOSTED_ZONE_ID=$(aws route53 list-hosted-zones --query "HostedZones[?Name=='${DOMAIN}.'].Id" --output text 2>/dev/null | sed 's|/hostedzone/||')
+fi
 
-if [[ -z "$HOSTED_ZONE_ID" ]]; then
+if [[ "$USE_DOKKU_DNS" == false ]] && [[ -z "$HOSTED_ZONE_ID" ]]; then
   echo "!     No Route53 hosted zone found for $DOMAIN"
   echo ""
   echo "       Add these DNS records manually:"
-  echo "$DOMAIN_INFO" | jq -r '.records[] | "         \(.type) \(.name).\(.name | if . == "" then "" else "." end)\(input.name) -> \(.value)"' 2>/dev/null || \
   echo "$DOMAIN_INFO" | jq -r '.records[] | "         \(.type) \(.name) -> \(.value)"'
   echo ""
+  echo "       Tip: Install dokku-dns to use any DNS provider"
   echo "       Then verify in Resend dashboard and re-run this command."
 else
-  echo "       Found zone: $HOSTED_ZONE_ID"
+  if [[ "$USE_DOKKU_DNS" == false ]]; then
+    echo "       Found zone: $HOSTED_ZONE_ID"
+  fi
 
-  # Step 4: Add DNS records to Route53
-  echo "-----> Adding DNS records to Route53..."
+  # Step 4: Add DNS records
+  echo "-----> Adding DNS records..."
 
   # Process each record using jq
   echo "$DOMAIN_INFO" | jq -c '.records[]' | while read -r record; do
@@ -166,35 +174,44 @@ else
 
     echo "       Adding: $TYPE $FULL_NAME"
 
-    # For TXT records, wrap value in quotes
-    if [[ "$TYPE" == "TXT" ]]; then
-      VALUE="\"$VALUE\""
-    fi
-
-    # Build change batch JSON using jq
-    CHANGE_BATCH=$(jq -n \
-      --arg name "$FULL_NAME" \
-      --arg type "$TYPE" \
-      --argjson ttl "$TTL" \
-      --arg value "$VALUE" \
-      '{
-        Changes: [{
-          Action: "UPSERT",
-          ResourceRecordSet: {
-            Name: $name,
-            Type: $type,
-            TTL: $ttl,
-            ResourceRecords: [{Value: $value}]
-          }
-        }]
-      }')
-
-    if aws route53 change-resource-record-sets \
-      --hosted-zone-id "$HOSTED_ZONE_ID" \
-      --change-batch "$CHANGE_BATCH" >/dev/null 2>&1; then
-      echo "         ✓ Added"
+    if [[ "$USE_DOKKU_DNS" == true ]]; then
+      if dokku dns:records:create "$FULL_NAME" "$TYPE" "$VALUE" --ttl "$TTL" >/dev/null 2>&1; then
+        echo "         ✓ Added"
+      else
+        echo "         ✗ Failed to add"
+      fi
     else
-      echo "         ✗ Failed to add"
+      # Fallback to Route53 API
+      # For TXT records, wrap value in quotes
+      if [[ "$TYPE" == "TXT" ]]; then
+        VALUE="\"$VALUE\""
+      fi
+
+      # Build change batch JSON using jq
+      CHANGE_BATCH=$(jq -n \
+        --arg name "$FULL_NAME" \
+        --arg type "$TYPE" \
+        --argjson ttl "$TTL" \
+        --arg value "$VALUE" \
+        '{
+          Changes: [{
+            Action: "UPSERT",
+            ResourceRecordSet: {
+              Name: $name,
+              Type: $type,
+              TTL: $ttl,
+              ResourceRecords: [{Value: $value}]
+            }
+          }]
+        }')
+
+      if aws route53 change-resource-record-sets \
+        --hosted-zone-id "$HOSTED_ZONE_ID" \
+        --change-batch "$CHANGE_BATCH" >/dev/null 2>&1; then
+        echo "         ✓ Added"
+      else
+        echo "         ✗ Failed to add"
+      fi
     fi
   done
 
