@@ -202,3 +202,83 @@ provider_info() {
   echo "       API Key: $API_KEY"
   echo "       Endpoint: $SMTP_HOST:587"
 }
+
+provider_doctor() {
+  local SERVICE="$1"
+  local SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+  local CONFIG_DIR="$SERVICE_ROOT/provider-config"
+  local issues=0
+
+  echo "-----> Checking Mailgun configuration..."
+
+  local API_KEY DOMAIN REGION
+  API_KEY=$(cat "$CONFIG_DIR/API_KEY" 2>/dev/null || echo "")
+  DOMAIN=$(cat "$CONFIG_DIR/DOMAIN" 2>/dev/null || echo "")
+  REGION=$(cat "$CONFIG_DIR/REGION" 2>/dev/null || echo "us")
+
+  if [[ -n "$API_KEY" ]]; then
+    echo "       ✓ API key configured"
+  else
+    echo "       ✗ API key not configured"
+    ((issues++))
+  fi
+
+  if [[ -n "$DOMAIN" ]]; then
+    echo "       ✓ Domain: $DOMAIN"
+  else
+    echo "       ✗ Domain not configured"
+    ((issues++))
+  fi
+
+  echo "       ✓ Region: $REGION"
+
+  # Determine endpoint
+  local SMTP_HOST API_BASE
+  case "$REGION" in
+    eu|EU|europe|EUROPE)
+      SMTP_HOST="$MAILGUN_EU_SMTP"
+      API_BASE="https://api.eu.mailgun.net/v3"
+      ;;
+    *)
+      SMTP_HOST="$MAILGUN_US_SMTP"
+      API_BASE="https://api.mailgun.net/v3"
+      ;;
+  esac
+
+  # Check SMTP connectivity
+  echo "-----> Checking Mailgun connectivity..."
+  if nc -z -w5 "$SMTP_HOST" 587 2>/dev/null; then
+    echo "       ✓ Can reach $SMTP_HOST:587"
+  else
+    echo "       ✗ Cannot reach $SMTP_HOST:587"
+    ((issues++))
+  fi
+
+  # Check domain status via API if curl available
+  if [[ -n "$API_KEY" ]] && [[ -n "$DOMAIN" ]] && command -v curl &>/dev/null; then
+    echo "-----> Checking domain status..."
+    local response
+    response=$(curl -s -o /dev/null -w "%{http_code}" \
+      --user "api:$API_KEY" \
+      "$API_BASE/domains/$DOMAIN" 2>/dev/null)
+
+    case "$response" in
+      200)
+        echo "       ✓ Domain verified in Mailgun"
+        ;;
+      401)
+        echo "       ✗ API key is invalid"
+        ((issues++))
+        ;;
+      404)
+        echo "       ✗ Domain not found in Mailgun account"
+        ((issues++))
+        ;;
+      *)
+        echo "       ? Could not verify domain status (HTTP $response)"
+        ;;
+    esac
+  fi
+
+  return $issues
+}

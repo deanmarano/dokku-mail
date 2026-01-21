@@ -48,3 +48,15 @@ provider_info() {
   echo "       Web UI: http://localhost:$PROVIDER_WEB_PORT"
   echo "       Mode: Capture only (no external delivery)"
 }
+
+provider_doctor() {
+  local SERVICE="$1"
+  local issues=0
+
+  echo "-----> Checking mock provider..."
+  echo "       ✓ Using mock provider (MailHog)"
+  echo "       ✓ Web UI: http://localhost:$PROVIDER_WEB_PORT"
+  echo "       ✓ Emails are captured locally (not delivered)"
+
+  return $issues
+}

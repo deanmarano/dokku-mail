@@ -118,3 +118,69 @@ provider_info() {
   echo "       API Key: $API_KEY"
   echo "       Endpoint: smtp.resend.com:587"
 }
+
+provider_doctor() {
+  local SERVICE="$1"
+  local SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+  local CONFIG_DIR="$SERVICE_ROOT/provider-config"
+  local issues=0
+
+  echo "-----> Checking Resend configuration..."
+
+  local API_KEY SENDER_DOMAIN
+  API_KEY=$(cat "$CONFIG_DIR/API_KEY" 2>/dev/null || echo "")
+  SENDER_DOMAIN=$(cat "$CONFIG_DIR/SENDER_DOMAIN" 2>/dev/null || echo "")
+
+  if [[ -n "$API_KEY" ]]; then
+    echo "       ✓ API key configured"
+  else
+    echo "       ✗ API key not configured"
+    ((issues++))
+  fi
+
+  if [[ -n "$SENDER_DOMAIN" ]]; then
+    echo "       ✓ Sender domain: $SENDER_DOMAIN"
+  else
+    echo "       ✗ Sender domain not configured"
+    ((issues++))
+  fi
+
+  # Check SMTP connectivity
+  echo "-----> Checking Resend connectivity..."
+  if nc -z -w5 smtp.resend.com 587 2>/dev/null; then
+    echo "       ✓ Can reach smtp.resend.com:587"
+  else
+    echo "       ✗ Cannot reach smtp.resend.com:587"
+    ((issues++))
+  fi
+
+  # Check domain status via API if curl available
+  if [[ -n "$API_KEY" ]] && [[ -n "$SENDER_DOMAIN" ]] && command -v curl &>/dev/null; then
+    echo "-----> Checking domain status..."
+    local DOMAINS_RESPONSE
+    DOMAINS_RESPONSE=$(curl -s "https://api.resend.com/domains" \
+      -H "Authorization: Bearer $API_KEY" 2>/dev/null)
+
+    if command -v jq &>/dev/null; then
+      local DOMAIN_STATUS
+      DOMAIN_STATUS=$(echo "$DOMAINS_RESPONSE" | jq -r ".data[] | select(.name == \"$SENDER_DOMAIN\") | .status" 2>/dev/null || echo "")
+
+      if [[ "$DOMAIN_STATUS" == "verified" ]]; then
+        echo "       ✓ Domain verified in Resend"
+      elif [[ "$DOMAIN_STATUS" == "pending" ]]; then
+        echo "       ! Domain pending verification"
+        ((issues++))
+      elif [[ -n "$DOMAIN_STATUS" ]]; then
+        echo "       ✗ Domain status: $DOMAIN_STATUS"
+        ((issues++))
+      else
+        echo "       ! Domain not found in Resend account"
+        ((issues++))
+      fi
+    else
+      echo "       ? Install jq for domain status check"
+    fi
+  fi
+
+  return $issues
+}

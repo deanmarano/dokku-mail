@@ -177,3 +177,59 @@ provider_info() {
   echo "       TLS Mode: $SMTP_TLS"
   echo "       From Domain: $FROM_DOMAIN"
 }
+
+provider_doctor() {
+  local SERVICE="$1"
+  local SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+  local CONFIG_DIR="$SERVICE_ROOT/provider-config"
+  local issues=0
+
+  echo "-----> Checking Generic SMTP configuration..."
+
+  local SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD
+  SMTP_HOST=$(cat "$CONFIG_DIR/SMTP_HOST" 2>/dev/null || echo "")
+  SMTP_PORT=$(cat "$CONFIG_DIR/SMTP_PORT" 2>/dev/null || echo "")
+  SMTP_USERNAME=$(cat "$CONFIG_DIR/SMTP_USERNAME" 2>/dev/null || echo "")
+  SMTP_PASSWORD=$(cat "$CONFIG_DIR/SMTP_PASSWORD" 2>/dev/null || echo "")
+
+  if [[ -n "$SMTP_HOST" ]]; then
+    echo "       ✓ SMTP host: $SMTP_HOST"
+  else
+    echo "       ✗ SMTP host not configured"
+    ((issues++))
+  fi
+
+  if [[ -n "$SMTP_PORT" ]]; then
+    echo "       ✓ SMTP port: $SMTP_PORT"
+  else
+    echo "       ✗ SMTP port not configured"
+    ((issues++))
+  fi
+
+  if [[ -n "$SMTP_USERNAME" ]]; then
+    echo "       ✓ SMTP username configured"
+  else
+    echo "       ✗ SMTP username not configured"
+    ((issues++))
+  fi
+
+  if [[ -n "$SMTP_PASSWORD" ]]; then
+    echo "       ✓ SMTP password configured"
+  else
+    echo "       ✗ SMTP password not configured"
+    ((issues++))
+  fi
+
+  # Check SMTP connectivity
+  if [[ -n "$SMTP_HOST" ]] && [[ -n "$SMTP_PORT" ]]; then
+    echo "-----> Checking SMTP connectivity..."
+    if nc -z -w5 "$SMTP_HOST" "$SMTP_PORT" 2>/dev/null; then
+      echo "       ✓ Can reach $SMTP_HOST:$SMTP_PORT"
+    else
+      echo "       ✗ Cannot reach $SMTP_HOST:$SMTP_PORT"
+      ((issues++))
+    fi
+  fi
+
+  return $issues
+}

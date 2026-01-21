@@ -152,3 +152,64 @@ provider_info() {
   echo "       From Domain: $FROM_DOMAIN"
   echo "       Endpoint: $SENDGRID_SMTP:587"
 }
+
+provider_doctor() {
+  local SERVICE="$1"
+  local SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+  local CONFIG_DIR="$SERVICE_ROOT/provider-config"
+  local issues=0
+
+  echo "-----> Checking SendGrid configuration..."
+
+  local API_KEY FROM_DOMAIN
+  API_KEY=$(cat "$CONFIG_DIR/API_KEY" 2>/dev/null || echo "")
+  FROM_DOMAIN=$(cat "$CONFIG_DIR/FROM_DOMAIN" 2>/dev/null || echo "*")
+
+  if [[ -n "$API_KEY" ]]; then
+    echo "       ✓ API key configured"
+    if [[ "$API_KEY" =~ ^SG\. ]]; then
+      echo "       ✓ API key format valid"
+    else
+      echo "       ✗ API key format invalid (should start with SG.)"
+      ((issues++))
+    fi
+  else
+    echo "       ✗ API key not configured"
+    ((issues++))
+  fi
+
+  echo "       ✓ From domain: $FROM_DOMAIN"
+
+  # Check SMTP connectivity
+  echo "-----> Checking SendGrid connectivity..."
+  if nc -z -w5 "$SENDGRID_SMTP" 587 2>/dev/null; then
+    echo "       ✓ Can reach $SENDGRID_SMTP:587"
+  else
+    echo "       ✗ Cannot reach $SENDGRID_SMTP:587"
+    ((issues++))
+  fi
+
+  # Check API key validity if curl available
+  if [[ -n "$API_KEY" ]] && command -v curl &>/dev/null; then
+    echo "-----> Checking API key validity..."
+    local response
+    response=$(curl -s -o /dev/null -w "%{http_code}" \
+      -H "Authorization: Bearer $API_KEY" \
+      "https://api.sendgrid.com/v3/user/profile" 2>/dev/null)
+
+    case "$response" in
+      200)
+        echo "       ✓ API key valid"
+        ;;
+      401|403)
+        echo "       ✗ API key is invalid or lacks permissions"
+        ((issues++))
+        ;;
+      *)
+        echo "       ? Could not verify API key (HTTP $response)"
+        ;;
+    esac
+  fi
+
+  return $issues
+}

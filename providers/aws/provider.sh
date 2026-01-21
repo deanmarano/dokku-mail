@@ -131,6 +131,153 @@ provider_info() {
   echo "       Endpoint: email-smtp.$AWS_REGION.amazonaws.com:587"
 }
 
+provider_doctor() {
+  local SERVICE="$1"
+  local SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+  local CONFIG_DIR="$SERVICE_ROOT/provider-config"
+  local issues=0
+
+  echo "-----> Checking AWS SES configuration..."
+
+  local SMTP_USERNAME SMTP_PASSWORD AWS_REGION SENDER_DOMAIN
+  SMTP_USERNAME=$(cat "$CONFIG_DIR/SMTP_USERNAME" 2>/dev/null || echo "")
+  SMTP_PASSWORD=$(cat "$CONFIG_DIR/SMTP_PASSWORD" 2>/dev/null || echo "")
+  AWS_REGION=$(cat "$CONFIG_DIR/AWS_REGION" 2>/dev/null || echo "")
+  SENDER_DOMAIN=$(cat "$CONFIG_DIR/SENDER_DOMAIN" 2>/dev/null || echo "")
+
+  if [[ -n "$SMTP_USERNAME" ]]; then
+    echo "       ✓ SMTP username configured"
+  else
+    echo "       ✗ SMTP username not configured"
+    ((issues++))
+  fi
+
+  if [[ -n "$SMTP_PASSWORD" ]]; then
+    echo "       ✓ SMTP password configured"
+  else
+    echo "       ✗ SMTP password not configured"
+    ((issues++))
+  fi
+
+  if [[ -n "$AWS_REGION" ]]; then
+    echo "       ✓ AWS region: $AWS_REGION"
+    if [[ "$AWS_REGION" =~ ^[a-z]{2}-[a-z]+-[0-9]+$ ]]; then
+      echo "       ✓ Region format valid"
+    else
+      echo "       ✗ Region format invalid"
+      ((issues++))
+    fi
+  else
+    echo "       ✗ AWS region not configured"
+    ((issues++))
+  fi
+
+  if [[ -n "$SENDER_DOMAIN" ]]; then
+    echo "       ✓ Sender domain: $SENDER_DOMAIN"
+  else
+    echo "       ! Sender domain not configured (test emails may fail)"
+  fi
+
+  # Check SMTP connectivity
+  if [[ -n "$AWS_REGION" ]]; then
+    local SES_ENDPOINT="email-smtp.$AWS_REGION.amazonaws.com"
+    echo "-----> Checking SES connectivity..."
+    if nc -z -w5 "$SES_ENDPOINT" 587 2>/dev/null; then
+      echo "       ✓ Can reach $SES_ENDPOINT:587"
+    else
+      echo "       ✗ Cannot reach $SES_ENDPOINT:587"
+      ((issues++))
+    fi
+  fi
+
+  # Extended AWS CLI checks (optional)
+  if command -v aws &>/dev/null; then
+    echo "       ✓ AWS CLI available"
+
+    # Check SES identity
+    if [[ -n "$SENDER_DOMAIN" ]] && [[ -n "$AWS_REGION" ]]; then
+      echo "-----> Checking SES identity..."
+      local IDENTITY_STATUS
+      if IDENTITY_STATUS=$(aws sesv2 get-email-identity --email-identity "$SENDER_DOMAIN" --region "$AWS_REGION" 2>/dev/null); then
+        echo "       ✓ SES identity exists: $SENDER_DOMAIN"
+
+        # Check DKIM
+        local DKIM_STATUS
+        DKIM_STATUS=$(echo "$IDENTITY_STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('DkimAttributes',{}).get('Status','UNKNOWN'))" 2>/dev/null || echo "UNKNOWN")
+        if [[ "$DKIM_STATUS" == "SUCCESS" ]]; then
+          echo "       ✓ DKIM verified"
+        elif [[ "$DKIM_STATUS" == "PENDING" ]]; then
+          echo "       ! DKIM pending verification"
+        else
+          echo "       ✗ DKIM status: $DKIM_STATUS"
+          ((issues++))
+        fi
+
+        # Check if verified for sending
+        local VERIFIED
+        VERIFIED=$(echo "$IDENTITY_STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('VerifiedForSendingStatus',False))" 2>/dev/null || echo "False")
+        if [[ "$VERIFIED" == "True" ]]; then
+          echo "       ✓ Domain verified for sending"
+        else
+          echo "       ✗ Domain not verified for sending"
+          ((issues++))
+        fi
+      else
+        echo "       ✗ SES identity not found: $SENDER_DOMAIN"
+        ((issues++))
+      fi
+    fi
+
+    # Check sandbox mode
+    if [[ -n "$AWS_REGION" ]]; then
+      echo "-----> Checking SES account status..."
+      local ACCOUNT_STATUS
+      if ACCOUNT_STATUS=$(aws sesv2 get-account --region "$AWS_REGION" 2>/dev/null); then
+        local PRODUCTION_ACCESS
+        PRODUCTION_ACCESS=$(echo "$ACCOUNT_STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ProductionAccessEnabled',False))" 2>/dev/null || echo "False")
+        if [[ "$PRODUCTION_ACCESS" == "True" ]]; then
+          echo "       ✓ SES production access enabled"
+        else
+          echo "       ! SES in SANDBOX MODE - can only send to verified addresses"
+        fi
+
+        # Check sending quota
+        local SEND_QUOTA
+        SEND_QUOTA=$(echo "$ACCOUNT_STATUS" | python3 -c "import sys,json; d=json.load(sys.stdin).get('SendQuota',{}); print(f\"{d.get('SentLast24Hours',0):.0f}/{d.get('Max24HourSend',0):.0f}\")" 2>/dev/null || echo "unknown")
+        echo "       ✓ Send quota (24h): $SEND_QUOTA"
+      else
+        echo "       ? Cannot check SES account status (missing ses:GetAccount permission)"
+      fi
+    fi
+
+    # Check IAM user
+    echo "-----> Checking IAM user..."
+    local IAM_USER="ses-smtp-user-dokku-mail-$SERVICE"
+    if aws iam get-user --user-name "$IAM_USER" &>/dev/null; then
+      echo "       ✓ IAM user exists: $IAM_USER"
+
+      # Check access key matches
+      local CURRENT_KEYS
+      CURRENT_KEYS=$(aws iam list-access-keys --user-name "$IAM_USER" --query 'AccessKeyMetadata[*].AccessKeyId' --output text 2>/dev/null || echo "")
+      if echo "$CURRENT_KEYS" | grep -q "$SMTP_USERNAME"; then
+        echo "       ✓ Access key matches configured SMTP username"
+      else
+        echo "       ✗ Access key drift detected - configured key not found in IAM"
+        echo "         Configured: $SMTP_USERNAME"
+        echo "         IAM keys: $CURRENT_KEYS"
+        echo "         Run: dokku mail:provider:reset $SERVICE && dokku mail:aws:setup $SERVICE $SENDER_DOMAIN"
+        ((issues++))
+      fi
+    else
+      echo "       ? IAM user not found: $IAM_USER (may have been created manually)"
+    fi
+  else
+    echo "       ? AWS CLI not available - skipping extended AWS checks"
+  fi
+
+  return $issues
+}
+
 # Generate SES SMTP password from IAM secret access key
 # Based on AWS documentation: https://docs.aws.amazon.com/ses/latest/dg/smtp-credentials.html
 generate_ses_smtp_password() {
