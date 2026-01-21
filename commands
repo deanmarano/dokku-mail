@@ -30,6 +30,7 @@ show_help() {
   echo -e "    mail:status <service> [-q|--quiet]                \033[2;37mshow service status (exit: 0=healthy, 1=degraded, 2=down)\033[m"
   echo -e "    mail:test <service> <to-address>                  \033[2;37msend a test email\033[m"
   echo -e "    mail:unlink <service> <app>                       \033[2;37munlink the mail service from the app\033[m"
+  echo -e "    mail:version                                      \033[2;37mshow plugin version\033[m"
   echo ""
   echo -e "    mail:vars:set <app> KEY=VALUE                     \033[2;37mset custom env var mapping for an app\033[m"
   echo -e "    mail:vars:set <app> --template=<name>             \033[2;37mapply a built-in template (lldap, authelia, nextcloud, etc.)\033[m"

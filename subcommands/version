@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Skip command name if passed
+[[ "$1" == "mail:version" ]] && shift
+
+cd "$PLUGIN_BASE_PATH"
+
+if [[ -d ".git" ]] || git rev-parse --git-dir &>/dev/null 2>&1; then
+  SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  DATE=$(git log -1 --format=%ci 2>/dev/null || echo "unknown")
+  echo "dokku-mail $SHA ($DATE)"
+else
+  # Fallback if not a git repo
+  VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' "$PLUGIN_BASE_PATH/plugin.toml" 2>/dev/null || echo "unknown")
+  echo "dokku-mail $VERSION"
+fi
