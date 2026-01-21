@@ -72,15 +72,16 @@ teardown() {
 
 @test "mail:provider:info masks sensitive values" {
   dokku mail:provider:set "$TEST_SERVICE" "resend"
-  dokku mail:provider:config "$TEST_SERVICE" "API_KEY=re_DtnPCFXU_HrVPqHSR9GzH1idR9rYwWDxc"
+  dokku mail:provider:config "$TEST_SERVICE" "API_KEY=re_test_fake_key_for_testing_1234567890abcdef"
   dokku mail:provider:config "$TEST_SERVICE" "SENDER_DOMAIN=example.com"
 
   run dokku mail:provider:info "$TEST_SERVICE"
   assert_success
   # Should show masked key, not full key
-  assert_output --partial "re_Dtn"
+  # Masking shows first 6 chars (re_tes) and last 4 chars (cdef)
+  assert_output --partial "re_tes"
   assert_output --partial "***"
-  refute_output --partial "HrVPqHSR9GzH1idR9rYwWDxc"
+  refute_output --partial "fake_key_for_testing"
 }
 
 @test "mail:provider:set fails for invalid provider" {
