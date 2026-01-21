@@ -5,20 +5,23 @@ PROVIDER_NAME="mock"
 PROVIDER_DISPLAY_NAME="Mock (MailHog)"
 PROVIDER_IMAGE="mailhog/mailhog"
 PROVIDER_IMAGE_VERSION="latest"
-PROVIDER_SMTP_PORT="1025"
+PROVIDER_SMTP_PORT="25"
 PROVIDER_WEB_PORT="8025"
 PROVIDER_REQUIRED_CONFIG=""
 
 provider_create_container() {
   local SERVICE="$1"
   local CONTAINER_NAME="dokku.mail.$SERVICE"
+  local NETWORK="${MAIL_NETWORK:-dokku.mail.$SERVICE}"
 
+  # Configure MailHog to listen on port 25 for consistency with other providers
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
-    --network bridge \
+    --network "$NETWORK" \
     -p "$PROVIDER_WEB_PORT:8025" \
-    "$PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION"
+    "$PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION" \
+    -smtp-bind-addr "0.0.0.0:25"
 }
 
 provider_get_smtp_port() {

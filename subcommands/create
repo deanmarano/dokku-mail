@@ -13,6 +13,7 @@ SERVICE="${1:-default}"
 
 SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
 CONTAINER_NAME="dokku.mail.$SERVICE"
+NETWORK_NAME="dokku.mail.$SERVICE"
 
 # Check if service already exists
 if [[ -d "$SERVICE_ROOT" ]]; then
@@ -32,12 +33,17 @@ echo "mock" > "$SERVICE_ROOT/PROVIDER"
 # Load mock provider
 load_provider "$SERVICE"
 
+# Create Docker network for this service
+echo "-----> Creating network $NETWORK_NAME"
+docker network create "$NETWORK_NAME" 2>/dev/null || true
+
 # Pull image
 echo "-----> Pulling $PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION"
 docker pull "$PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION" || true
 
-# Create container using provider
+# Create container using provider (pass network name)
 echo "-----> Starting container"
+export MAIL_NETWORK="$NETWORK_NAME"
 provider_create_container "$SERVICE"
 
 # Store service metadata

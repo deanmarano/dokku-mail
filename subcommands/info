@@ -19,6 +19,7 @@ fi
 
 SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
 CONTAINER_NAME="dokku.mail.$SERVICE"
+NETWORK_NAME="dokku.mail.$SERVICE"
 
 # Check if service exists
 if [[ ! -d "$SERVICE_ROOT" ]]; then
@@ -42,9 +43,10 @@ fi
 
 echo "       Status: $STATUS"
 echo "       Container: $CONTAINER_NAME"
-echo "       IP: $CONTAINER_IP"
+echo "       Network: $NETWORK_NAME"
+echo "       SMTP Host: $CONTAINER_NAME (via Docker DNS)"
 echo "       SMTP Port: $PLUGIN_SMTP_PORT"
-echo "       Web UI: http://localhost:$PLUGIN_WEB_PORT"
+echo "       Internal IP: $CONTAINER_IP"
 
 # Image
 if [[ -f "$SERVICE_ROOT/IMAGE" ]]; then

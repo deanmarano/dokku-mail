@@ -112,6 +112,17 @@ EOF
   esac
 
   cat "$APP_VARS_FILE" 2>/dev/null || true
+
+  # Auto re-link if app is already linked to a service
+  for service_dir in "$PLUGIN_DATA_ROOT"/*/; do
+    service=$(basename "$service_dir")
+    [[ "$service" == "app-vars" ]] && continue
+    if grep -q "^$APP$" "$service_dir/LINKS" 2>/dev/null; then
+      echo ""
+      "$PLUGIN_BASE_PATH/subcommands/link" "$service" "$APP"
+      exit 0
+    fi
+  done
   exit 0
 fi
 
@@ -142,5 +153,17 @@ for arg in "$@"; do
 done
 
 echo "-----> Updated vars for $APP"
+
+# Auto re-link if app is already linked to a service
+for service_dir in "$PLUGIN_DATA_ROOT"/*/; do
+  service=$(basename "$service_dir")
+  [[ "$service" == "app-vars" ]] && continue
+  if grep -q "^$APP$" "$service_dir/LINKS" 2>/dev/null; then
+    echo ""
+    "$PLUGIN_BASE_PATH/subcommands/link" "$service" "$APP"
+    exit 0
+  fi
+done
+
 echo ""
-echo "       Re-link app to apply: dokku mail:link <service> $APP"
+echo "       Link app to apply: dokku mail:link <service> $APP"

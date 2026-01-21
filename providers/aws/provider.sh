@@ -14,6 +14,7 @@ provider_create_container() {
   local CONTAINER_NAME="dokku.mail.$SERVICE"
   local SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
   local CONFIG_DIR="$SERVICE_ROOT/provider-config"
+  local NETWORK="${MAIL_NETWORK:-dokku.mail.$SERVICE}"
 
   # Read config
   local SMTP_USERNAME SMTP_PASSWORD AWS_REGION
@@ -34,7 +35,7 @@ provider_create_container() {
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
-    --network bridge \
+    --network "$NETWORK" \
     -e "RELAYHOST=$SES_ENDPOINT:587" \
     -e "RELAYHOST_USERNAME=$SMTP_USERNAME" \
     -e "RELAYHOST_PASSWORD=$SMTP_PASSWORD" \

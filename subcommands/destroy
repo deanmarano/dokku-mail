@@ -29,6 +29,7 @@ fi
 
 SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
 CONTAINER_NAME="dokku.mail.$SERVICE"
+NETWORK_NAME="dokku.mail.$SERVICE"
 
 # Check if service exists
 if [[ ! -d "$SERVICE_ROOT" ]]; then
@@ -63,6 +64,12 @@ echo "-----> Destroying mail service $SERVICE"
 if docker ps -a -q -f "name=$CONTAINER_NAME" | grep -q .; then
   echo "-----> Removing container"
   docker rm -f "$CONTAINER_NAME" || true
+fi
+
+# Remove Docker network
+if docker network ls -q -f "name=^${NETWORK_NAME}$" | grep -q .; then
+  echo "-----> Removing network"
+  docker network rm "$NETWORK_NAME" || true
 fi
 
 # Remove service directory

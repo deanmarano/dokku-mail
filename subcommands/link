@@ -25,6 +25,7 @@ fi
 
 SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
 CONTAINER_NAME="dokku.mail.$SERVICE"
+NETWORK_NAME="dokku.mail.$SERVICE"
 VARS_DIR="$PLUGIN_DATA_ROOT/app-vars"
 
 # Check if service exists
@@ -40,10 +41,10 @@ if ! dokku apps:exists "$APP" 2>/dev/null; then
   exit 1
 fi
 
-# Check if already linked to THIS service
+# Check if already linked to THIS service (will refresh config if so)
+REFRESHING=""
 if grep -q "^$APP$" "$SERVICE_ROOT/LINKS" 2>/dev/null; then
-  echo "!     App $APP is already linked to $SERVICE"
-  exit 1
+  REFRESHING="true"
 fi
 
 # Check if linked to ANY other mail service and unlink first
@@ -53,6 +54,24 @@ for other_service_dir in "$PLUGIN_DATA_ROOT"/*/; do
   [[ "$other_service" == "app-vars" ]] && continue
   if grep -q "^$APP$" "$other_service_dir/LINKS" 2>/dev/null; then
     echo "-----> Unlinking $APP from existing mail service $other_service"
+
+    # Detach from other service's network
+    dokku network:set "$APP" attach-post-deploy "" 2>/dev/null || true
+
+    # Unset env vars that were set by the other service
+    OTHER_LINKED_VARS_FILE="$other_service_dir/linked-vars/$APP"
+    if [[ -f "$OTHER_LINKED_VARS_FILE" ]]; then
+      OTHER_UNSET_VARS=()
+      while IFS= read -r var || [[ -n "$var" ]]; do
+        [[ -z "$var" ]] && continue
+        OTHER_UNSET_VARS+=("$var")
+      done < "$OTHER_LINKED_VARS_FILE"
+      if [[ ${#OTHER_UNSET_VARS[@]} -gt 0 ]]; then
+        dokku config:unset --no-restart "$APP" "${OTHER_UNSET_VARS[@]}" 2>/dev/null || true
+      fi
+      rm -f "$OTHER_LINKED_VARS_FILE"
+    fi
+
     # Remove from other service's links
     grep -v "^$APP$" "$other_service_dir/LINKS" > "$other_service_dir/LINKS.tmp" || true
     mv "$other_service_dir/LINKS.tmp" "$other_service_dir/LINKS"
@@ -63,13 +82,14 @@ done
 load_provider "$SERVICE"
 SMTP_PORT=$(provider_get_smtp_port)
 
-# Get container IP for the app to connect to
-CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME")
-
-if [[ -z "$CONTAINER_IP" ]]; then
-  echo "!     Could not get container IP. Is the service running?"
+# Verify mail container is running
+if ! docker ps -q -f "name=^${CONTAINER_NAME}$" | grep -q .; then
+  echo "!     Mail container is not running. Is the service started?"
   exit 1
 fi
+
+# Use container name for SMTP host (resolved via Docker DNS on shared network)
+SMTP_HOST="$CONTAINER_NAME"
 
 # Get sender domain from provider config if available
 SENDER_DOMAIN=""
@@ -77,12 +97,16 @@ if [[ -f "$SERVICE_ROOT/provider-config/SENDER_DOMAIN" ]]; then
   SENDER_DOMAIN=$(cat "$SERVICE_ROOT/provider-config/SENDER_DOMAIN")
 fi
 
-echo "-----> Linking $APP to mail service $SERVICE"
+if [[ -n "$REFRESHING" ]]; then
+  echo "-----> Refreshing $APP link to mail service $SERVICE"
+else
+  echo "-----> Linking $APP to mail service $SERVICE"
+fi
 
 # Function to expand placeholders in a value
 expand_placeholders() {
   local value="$1"
-  value="${value//%HOST%/$CONTAINER_IP}"
+  value="${value//%HOST%/$SMTP_HOST}"
   value="${value//%PORT%/$SMTP_PORT}"
   value="${value//%DOMAIN%/$SENDER_DOMAIN}"
   value="${value//%APP%/$APP}"
@@ -92,15 +116,15 @@ expand_placeholders() {
 # Start with default vars
 declare -a CONFIG_VARS
 CONFIG_VARS=(
-  "SMTP_HOST=$CONTAINER_IP"
+  "SMTP_HOST=$SMTP_HOST"
   "SMTP_PORT=$SMTP_PORT"
-  "MAIL_URL=smtp://$CONTAINER_IP:$SMTP_PORT"
+  "MAIL_URL=smtp://$SMTP_HOST:$SMTP_PORT"
 )
 
 echo "-----> Setting default vars"
-echo "       SMTP_HOST=$CONTAINER_IP"
+echo "       SMTP_HOST=$SMTP_HOST"
 echo "       SMTP_PORT=$SMTP_PORT"
-echo "       MAIL_URL=smtp://$CONTAINER_IP:$SMTP_PORT"
+echo "       MAIL_URL=smtp://$SMTP_HOST:$SMTP_PORT"
 
 # Add custom vars if configured for this app
 APP_VARS_FILE="$VARS_DIR/$APP"
@@ -125,9 +149,24 @@ fi
 # Set environment variables on the app
 dokku config:set --no-restart "$APP" "${CONFIG_VARS[@]}" >/dev/null
 
-# Record the link
-echo "$APP" >> "$SERVICE_ROOT/LINKS"
+# Attach app to mail service network
+echo "-----> Attaching $APP to network $NETWORK_NAME"
+dokku network:set "$APP" attach-post-deploy "$NETWORK_NAME"
 
-echo "-----> $APP linked to $SERVICE"
+# Record the link (skip if refreshing - already in LINKS)
+if [[ -z "$REFRESHING" ]]; then
+  echo "$APP" >> "$SERVICE_ROOT/LINKS"
+fi
+
+# Store which vars were set (for unlink to know what to remove)
+LINKED_VARS_DIR="$SERVICE_ROOT/linked-vars"
+mkdir -p "$LINKED_VARS_DIR"
+printf '%s\n' "${CONFIG_VARS[@]%%=*}" > "$LINKED_VARS_DIR/$APP"
+
+if [[ -n "$REFRESHING" ]]; then
+  echo "-----> $APP link refreshed"
+else
+  echo "-----> $APP linked to $SERVICE"
+fi
 echo ""
 echo "       Restart your app to apply: dokku ps:restart $APP"

@@ -6,9 +6,10 @@ SMTP relay service plugin for [Dokku](https://dokku.com/). Provides outbound ema
 
 - **Multiple Providers**: AWS SES, Resend, Mailgun, SendGrid, Generic SMTP, or Mock (MailHog)
 - **Simple Linking**: Apps get `SMTP_HOST`, `SMTP_PORT`, and `MAIL_URL` environment variables automatically
+- **Network-based**: Uses Docker networks for stable connections that survive reboots
+- **Custom Vars**: Built-in templates for popular apps (lldap, authelia, nextcloud, gitea, gitlab)
 - **Unified Interface**: Same commands work across all providers
 - **Built-in Diagnostics**: Health checks, status monitoring, and troubleshooting tools
-- **Tested**: Comprehensive BATS integration test suite
 
 ## Quick Start
 
@@ -85,12 +86,50 @@ dokku mail:link <service> <app>
 
 # Unlink an app
 dokku mail:unlink <service> <app>
+
+# Re-run link to refresh config (idempotent)
+dokku mail:link <service> <app>
 ```
 
 When linked, apps receive these environment variables:
-- `SMTP_HOST` - Container IP address
-- `SMTP_PORT` - SMTP port (usually 25 internally)
+- `SMTP_HOST` - Container name (resolved via Docker DNS)
+- `SMTP_PORT` - SMTP port (25 for all providers)
 - `MAIL_URL` - Full SMTP URL (smtp://host:port)
+
+**Network-based linking**: Apps are attached to the mail service's Docker network and use the container name for SMTP_HOST. This means the connection survives container restarts and IP changes - no need to re-link after reboots.
+
+**Idempotent**: Running `mail:link` on an already-linked app refreshes its config. Use this after changing providers or custom vars.
+
+### Custom Environment Variables
+
+Different apps expect different environment variable names. Use `mail:vars:set` to customize:
+
+```bash
+# Set custom vars with placeholders
+dokku mail:vars:set myapp MAILER_HOST=%HOST% MAILER_PORT=%PORT%
+
+# Use a built-in template
+dokku mail:vars:set myapp --template=lldap
+
+# Clear custom vars (use defaults only)
+dokku mail:vars:set myapp --template=none
+
+# View current custom vars
+dokku mail:vars:list myapp
+
+# Remove a specific var
+dokku mail:vars:unset myapp MAILER_HOST
+```
+
+**Available placeholders:**
+- `%HOST%` - SMTP container name
+- `%PORT%` - SMTP port
+- `%DOMAIN%` - Sender domain (if configured)
+- `%APP%` - App name
+
+**Built-in templates:** `lldap`, `authelia`, `nextcloud`, `gitea`, `gitlab`, `rails`
+
+**Auto-refresh**: If the app is already linked, `vars:set` automatically refreshes the link to apply changes immediately.
 
 ### Provider Configuration
 
@@ -219,15 +258,15 @@ If your app can't connect to the mail service:
 3. For AWS SES: Check sandbox mode and domain verification
 4. For other providers: Check domain/sender verification in provider dashboard
 
-### Config Drift
+### Refreshing App Config
 
-If `mail:doctor` shows "config drift detected":
+If you change providers, update custom vars, or need to refresh an app's mail configuration:
 
 ```bash
 dokku mail:link <service> <app>
 ```
 
-This updates the app's environment variables to match the current container IP.
+This re-applies all environment variables with current values. The link command is idempotent - safe to run multiple times.
 
 ## Development
 

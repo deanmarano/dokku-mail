@@ -19,7 +19,8 @@ if [[ -z "$SERVICE" ]] || [[ -z "$APP" ]]; then
 fi
 
 SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
-VARS_DIR="$PLUGIN_DATA_ROOT/app-vars"
+NETWORK_NAME="dokku.mail.$SERVICE"
+LINKED_VARS_DIR="$SERVICE_ROOT/linked-vars"
 
 # Check if service exists
 if [[ ! -d "$SERVICE_ROOT" ]]; then
@@ -35,20 +36,19 @@ fi
 
 echo "-----> Unlinking $APP from mail service $SERVICE"
 
-# Build list of variables to unset - start with defaults
-UNSET_VARS=(SMTP_HOST SMTP_PORT MAIL_URL)
+# Build list of variables to unset from stored linked-vars
+UNSET_VARS=()
+LINKED_VARS_FILE="$LINKED_VARS_DIR/$APP"
 
-# Add custom vars if configured for this app
-APP_VARS_FILE="$VARS_DIR/$APP"
-if [[ -f "$APP_VARS_FILE" ]]; then
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    # Skip empty lines and comments
-    [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^# ]] && continue
-
-    KEY="${line%%=*}"
-    UNSET_VARS+=("$KEY")
-  done < "$APP_VARS_FILE"
+if [[ -f "$LINKED_VARS_FILE" ]]; then
+  # Use the stored list of vars that were set during link
+  while IFS= read -r var || [[ -n "$var" ]]; do
+    [[ -z "$var" ]] && continue
+    UNSET_VARS+=("$var")
+  done < "$LINKED_VARS_FILE"
+else
+  # Fallback for links created before this feature: use defaults
+  UNSET_VARS=(SMTP_HOST SMTP_PORT MAIL_URL)
 fi
 
 # Remove environment variables from the app
@@ -60,9 +60,16 @@ if [[ ${#UNSET_VARS[@]} -gt 0 ]]; then
   dokku config:unset --no-restart "$APP" "${UNSET_VARS[@]}" 2>/dev/null || true
 fi
 
+# Detach app from mail service network
+echo "-----> Detaching $APP from network $NETWORK_NAME"
+dokku network:set "$APP" attach-post-deploy "" 2>/dev/null || true
+
 # Remove from links file
 grep -v "^$APP$" "$SERVICE_ROOT/LINKS" > "$SERVICE_ROOT/LINKS.tmp" || true
 mv "$SERVICE_ROOT/LINKS.tmp" "$SERVICE_ROOT/LINKS"
+
+# Remove the stored linked-vars file
+rm -f "$LINKED_VARS_FILE"
 
 echo "-----> $APP unlinked from $SERVICE"
 echo ""
