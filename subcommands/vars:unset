@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+# Skip command name if passed
+[[ "$1" == "mail:vars:unset" ]] && shift
+
+APP="$1"
+shift || true
+
+if [[ -z "$APP" ]]; then
+  echo "Usage: dokku mail:vars:unset <app> [KEY...]"
+  echo ""
+  echo "Remove custom environment variable mappings for an app"
+  echo ""
+  echo "Examples:"
+  echo "  dokku mail:vars:unset myapp MAILER_HOST     # Remove one var"
+  echo "  dokku mail:vars:unset myapp --all           # Remove all custom vars"
+  exit 1
+fi
+
+VARS_DIR="$PLUGIN_DATA_ROOT/app-vars"
+APP_VARS_FILE="$VARS_DIR/$APP"
+
+if [[ ! -f "$APP_VARS_FILE" ]]; then
+  echo "!     No custom vars configured for $APP"
+  exit 1
+fi
+
+# Check for --all flag
+if [[ "$1" == "--all" ]]; then
+  rm -f "$APP_VARS_FILE"
+  echo "-----> Removed all custom vars for $APP"
+  exit 0
+fi
+
+if [[ $# -eq 0 ]]; then
+  echo "!     Specify keys to remove or use --all"
+  exit 1
+fi
+
+# Remove specified keys
+for KEY in "$@"; do
+  if grep -q "^${KEY}=" "$APP_VARS_FILE" 2>/dev/null; then
+    grep -v "^${KEY}=" "$APP_VARS_FILE" > "$APP_VARS_FILE.tmp" 2>/dev/null || true
+    mv "$APP_VARS_FILE.tmp" "$APP_VARS_FILE"
+    echo "       Removed: $KEY"
+  else
+    echo "       Not found: $KEY"
+  fi
+done
+
+# Remove file if empty
+if [[ ! -s "$APP_VARS_FILE" ]]; then
+  rm -f "$APP_VARS_FILE"
+fi
+
+echo "-----> Updated vars for $APP"
+echo ""
+echo "       Re-link app to apply: dokku mail:link <service> $APP"

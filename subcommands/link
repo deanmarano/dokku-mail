@@ -16,11 +16,16 @@ if [[ -z "$SERVICE" ]] || [[ -z "$APP" ]]; then
   echo "Usage: dokku mail:link <name> <app>"
   echo ""
   echo "Link an app to a mail service"
+  echo ""
+  echo "Custom vars can be configured with:"
+  echo "  dokku mail:vars:set <app> KEY=VALUE"
+  echo "  dokku mail:vars:set <app> --template=lldap"
   exit 1
 fi
 
 SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
 CONTAINER_NAME="dokku.mail.$SERVICE"
+VARS_DIR="$PLUGIN_DATA_ROOT/app-vars"
 
 # Check if service exists
 if [[ ! -d "$SERVICE_ROOT" ]]; then
@@ -45,6 +50,7 @@ fi
 for other_service_dir in "$PLUGIN_DATA_ROOT"/*/; do
   other_service=$(basename "$other_service_dir")
   [[ "$other_service" == "$SERVICE" ]] && continue
+  [[ "$other_service" == "app-vars" ]] && continue
   if grep -q "^$APP$" "$other_service_dir/LINKS" 2>/dev/null; then
     echo "-----> Unlinking $APP from existing mail service $other_service"
     # Remove from other service's links
@@ -72,43 +78,49 @@ if [[ -f "$SERVICE_ROOT/provider-config/SENDER_DOMAIN" ]]; then
 fi
 
 echo "-----> Linking $APP to mail service $SERVICE"
-echo "-----> Setting config vars"
-echo "       MAIL_URL:   smtp://$CONTAINER_IP:$SMTP_PORT"
-echo "       SMTP_HOST:  $CONTAINER_IP"
-echo "       SMTP_PORT:  $SMTP_PORT"
 
-# Build config vars
+# Function to expand placeholders in a value
+expand_placeholders() {
+  local value="$1"
+  value="${value//\{\{HOST\}\}/$CONTAINER_IP}"
+  value="${value//\{\{PORT\}\}/$SMTP_PORT}"
+  value="${value//\{\{DOMAIN\}\}/$SENDER_DOMAIN}"
+  value="${value//\{\{APP\}\}/$APP}"
+  echo "$value"
+}
+
+# Start with default vars
+declare -a CONFIG_VARS
 CONFIG_VARS=(
   "SMTP_HOST=$CONTAINER_IP"
   "SMTP_PORT=$SMTP_PORT"
   "MAIL_URL=smtp://$CONTAINER_IP:$SMTP_PORT"
 )
 
-# Add app-specific SMTP config for known apps
-APP_UPPER=$(echo "$APP" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
-case "$APP" in
-  lldap)
-    CONFIG_VARS+=("LLDAP_SMTP_OPTIONS__SERVER=$CONTAINER_IP")
-    CONFIG_VARS+=("LLDAP_SMTP_OPTIONS__PORT=$SMTP_PORT")
-    CONFIG_VARS+=("LLDAP_SMTP_OPTIONS__SMTP_ENCRYPTION=NONE")
-    CONFIG_VARS+=("LLDAP_SMTP_OPTIONS__ENABLE_PASSWORD_RESET=true")
-    if [[ -n "$SENDER_DOMAIN" ]]; then
-      CONFIG_VARS+=("LLDAP_SMTP_OPTIONS__FROM=lldap@$SENDER_DOMAIN")
-      echo "       LLDAP_SMTP_OPTIONS__FROM: lldap@$SENDER_DOMAIN"
-    fi
-    echo "       LLDAP_SMTP_OPTIONS__SERVER: $CONTAINER_IP"
-    ;;
-  authelia)
-    CONFIG_VARS+=("AUTHELIA_NOTIFIER_SMTP_HOST=$CONTAINER_IP")
-    CONFIG_VARS+=("AUTHELIA_NOTIFIER_SMTP_PORT=$SMTP_PORT")
-    CONFIG_VARS+=("AUTHELIA_NOTIFIER_SMTP_DISABLE_REQUIRE_TLS=true")
-    if [[ -n "$SENDER_DOMAIN" ]]; then
-      CONFIG_VARS+=("AUTHELIA_NOTIFIER_SMTP_SENDER=authelia@$SENDER_DOMAIN")
-      echo "       AUTHELIA_NOTIFIER_SMTP_SENDER: authelia@$SENDER_DOMAIN"
-    fi
-    echo "       AUTHELIA_NOTIFIER_SMTP_HOST: $CONTAINER_IP"
-    ;;
-esac
+echo "-----> Setting default vars"
+echo "       SMTP_HOST=$CONTAINER_IP"
+echo "       SMTP_PORT=$SMTP_PORT"
+echo "       MAIL_URL=smtp://$CONTAINER_IP:$SMTP_PORT"
+
+# Add custom vars if configured for this app
+APP_VARS_FILE="$VARS_DIR/$APP"
+if [[ -f "$APP_VARS_FILE" ]]; then
+  echo "-----> Setting custom vars"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Skip empty lines and comments
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^# ]] && continue
+
+    KEY="${line%%=*}"
+    VALUE="${line#*=}"
+
+    # Expand placeholders
+    EXPANDED_VALUE=$(expand_placeholders "$VALUE")
+
+    CONFIG_VARS+=("${KEY}=${EXPANDED_VALUE}")
+    echo "       ${KEY}=${EXPANDED_VALUE}"
+  done < "$APP_VARS_FILE"
+fi
 
 # Set environment variables on the app
 dokku config:set --no-restart "$APP" "${CONFIG_VARS[@]}" >/dev/null
@@ -117,7 +129,5 @@ dokku config:set --no-restart "$APP" "${CONFIG_VARS[@]}" >/dev/null
 echo "$APP" >> "$SERVICE_ROOT/LINKS"
 
 echo "-----> $APP linked to $SERVICE"
-echo "       SMTP_HOST=$CONTAINER_IP"
-echo "       SMTP_PORT=$SMTP_PORT"
 echo ""
 echo "       Restart your app to apply: dokku ps:restart $APP"

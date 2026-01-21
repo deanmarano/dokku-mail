@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+# Skip command name if passed
+[[ "$1" == "mail:vars:list" ]] && shift
+
+APP="$1"
+
+VARS_DIR="$PLUGIN_DATA_ROOT/app-vars"
+
+if [[ -z "$APP" ]]; then
+  echo "Usage: dokku mail:vars:list <app>"
+  echo ""
+  echo "List custom environment variable mappings for an app"
+  echo ""
+  echo "Apps with custom vars:"
+  if [[ -d "$VARS_DIR" ]] && [[ -n "$(ls -A "$VARS_DIR" 2>/dev/null)" ]]; then
+    for f in "$VARS_DIR"/*; do
+      [[ -f "$f" ]] && echo "  $(basename "$f")"
+    done
+  else
+    echo "  (none)"
+  fi
+  echo ""
+  echo "Default vars (always set for all apps):"
+  echo "  SMTP_HOST={{HOST}}"
+  echo "  SMTP_PORT={{PORT}}"
+  echo "  MAIL_URL=smtp://{{HOST}}:{{PORT}}"
+  exit 0
+fi
+
+APP_VARS_FILE="$VARS_DIR/$APP"
+
+echo "-----> Environment variables for $APP"
+echo ""
+echo "Default vars (always set):"
+echo "  SMTP_HOST={{HOST}}"
+echo "  SMTP_PORT={{PORT}}"
+echo "  MAIL_URL=smtp://{{HOST}}:{{PORT}}"
+echo ""
+
+if [[ -f "$APP_VARS_FILE" ]]; then
+  echo "Custom vars:"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^# ]] && continue
+    echo "  $line"
+  done < "$APP_VARS_FILE"
+else
+  echo "Custom vars: (none)"
+  echo ""
+  echo "Set custom vars with:"
+  echo "  dokku mail:vars:set $APP KEY=VALUE"
+  echo "  dokku mail:vars:set $APP --template=lldap"
+fi

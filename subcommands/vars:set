@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+
+# Skip command name if passed
+[[ "$1" == "mail:vars:set" ]] && shift
+
+APP="$1"
+shift || true
+
+if [[ -z "$APP" ]] || [[ $# -eq 0 ]]; then
+  echo "Usage: dokku mail:vars:set <app> KEY=VALUE [KEY=VALUE...]"
+  echo ""
+  echo "Set custom environment variable mappings for an app"
+  echo ""
+  echo "Placeholders available in values:"
+  echo "  {{HOST}}   - SMTP container IP address"
+  echo "  {{PORT}}   - SMTP port"
+  echo "  {{DOMAIN}} - Sender domain (if configured)"
+  echo "  {{APP}}    - App name"
+  echo ""
+  echo "Examples:"
+  echo "  dokku mail:vars:set myapp MAILER_HOST={{HOST}}"
+  echo "  dokku mail:vars:set myapp MAILER_DSN=smtp://{{HOST}}:{{PORT}}"
+  echo "  dokku mail:vars:set myapp EMAIL_FROM=noreply@{{DOMAIN}}"
+  echo ""
+  echo "Built-in templates:"
+  echo "  dokku mail:vars:set myapp --template=lldap"
+  echo "  dokku mail:vars:set myapp --template=authelia"
+  echo "  dokku mail:vars:set myapp --template=nextcloud"
+  echo "  dokku mail:vars:set myapp --template=gitea"
+  exit 1
+fi
+
+# Create vars directory if needed
+VARS_DIR="$PLUGIN_DATA_ROOT/app-vars"
+mkdir -p "$VARS_DIR"
+
+APP_VARS_FILE="$VARS_DIR/$APP"
+
+# Check for template flag
+if [[ "$1" == "--template="* ]]; then
+  TEMPLATE="${1#--template=}"
+
+  case "$TEMPLATE" in
+    lldap)
+      cat > "$APP_VARS_FILE" <<'EOF'
+LLDAP_SMTP_OPTIONS__SERVER={{HOST}}
+LLDAP_SMTP_OPTIONS__PORT={{PORT}}
+LLDAP_SMTP_OPTIONS__SMTP_ENCRYPTION=NONE
+LLDAP_SMTP_OPTIONS__ENABLE_PASSWORD_RESET=true
+LLDAP_SMTP_OPTIONS__FROM=lldap@{{DOMAIN}}
+EOF
+      echo "-----> Applied lldap template for $APP"
+      ;;
+    authelia)
+      cat > "$APP_VARS_FILE" <<'EOF'
+AUTHELIA_NOTIFIER_SMTP_HOST={{HOST}}
+AUTHELIA_NOTIFIER_SMTP_PORT={{PORT}}
+AUTHELIA_NOTIFIER_SMTP_DISABLE_REQUIRE_TLS=true
+AUTHELIA_NOTIFIER_SMTP_SENDER=authelia@{{DOMAIN}}
+EOF
+      echo "-----> Applied authelia template for $APP"
+      ;;
+    nextcloud)
+      cat > "$APP_VARS_FILE" <<'EOF'
+SMTP_HOST={{HOST}}
+SMTP_PORT={{PORT}}
+SMTP_SECURE=
+MAIL_FROM_ADDRESS=nextcloud
+MAIL_DOMAIN={{DOMAIN}}
+EOF
+      echo "-----> Applied nextcloud template for $APP"
+      ;;
+    gitea)
+      cat > "$APP_VARS_FILE" <<'EOF'
+GITEA__mailer__ENABLED=true
+GITEA__mailer__PROTOCOL=smtp
+GITEA__mailer__SMTP_ADDR={{HOST}}
+GITEA__mailer__SMTP_PORT={{PORT}}
+GITEA__mailer__FROM=gitea@{{DOMAIN}}
+EOF
+      echo "-----> Applied gitea template for $APP"
+      ;;
+    gitlab)
+      cat > "$APP_VARS_FILE" <<'EOF'
+GITLAB_OMNIBUS_CONFIG=gitlab_rails['smtp_enable'] = true; gitlab_rails['smtp_address'] = "{{HOST}}"; gitlab_rails['smtp_port'] = {{PORT}}; gitlab_rails['smtp_domain'] = "{{DOMAIN}}"; gitlab_rails['gitlab_email_from'] = "gitlab@{{DOMAIN}}"
+EOF
+      echo "-----> Applied gitlab template for $APP"
+      ;;
+    rails|default)
+      cat > "$APP_VARS_FILE" <<'EOF'
+SMTP_ADDRESS={{HOST}}
+SMTP_PORT={{PORT}}
+SMTP_DOMAIN={{DOMAIN}}
+MAILER_FROM=noreply@{{DOMAIN}}
+EOF
+      echo "-----> Applied rails/default template for $APP"
+      ;;
+    none|clear)
+      rm -f "$APP_VARS_FILE"
+      echo "-----> Cleared all custom vars for $APP (will use defaults only)"
+      ;;
+    *)
+      echo "!     Unknown template: $TEMPLATE"
+      echo "      Available: lldap, authelia, nextcloud, gitea, gitlab, rails, none"
+      exit 1
+      ;;
+  esac
+
+  cat "$APP_VARS_FILE" 2>/dev/null || true
+  exit 0
+fi
+
+# Process KEY=VALUE arguments
+for arg in "$@"; do
+  if [[ "$arg" != *"="* ]]; then
+    echo "!     Invalid format: $arg (expected KEY=VALUE)"
+    exit 1
+  fi
+
+  KEY="${arg%%=*}"
+  VALUE="${arg#*=}"
+
+  # Remove existing line with this key if present
+  if [[ -f "$APP_VARS_FILE" ]]; then
+    grep -v "^${KEY}=" "$APP_VARS_FILE" > "$APP_VARS_FILE.tmp" 2>/dev/null || true
+    mv "$APP_VARS_FILE.tmp" "$APP_VARS_FILE"
+  fi
+
+  # Add new line
+  echo "${KEY}=${VALUE}" >> "$APP_VARS_FILE"
+  echo "       $KEY=$VALUE"
+done
+
+echo "-----> Updated vars for $APP"
+echo ""
+echo "       Re-link app to apply: dokku mail:link <service> $APP"

@@ -19,6 +19,7 @@ if [[ -z "$SERVICE" ]] || [[ -z "$APP" ]]; then
 fi
 
 SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+VARS_DIR="$PLUGIN_DATA_ROOT/app-vars"
 
 # Check if service exists
 if [[ ! -d "$SERVICE_ROOT" ]]; then
@@ -34,32 +35,30 @@ fi
 
 echo "-----> Unlinking $APP from mail service $SERVICE"
 
-# Build list of variables to unset
+# Build list of variables to unset - start with defaults
 UNSET_VARS=(SMTP_HOST SMTP_PORT MAIL_URL)
 
-# Add app-specific variables for known apps
-case "$APP" in
-  lldap)
-    UNSET_VARS+=(
-      LLDAP_SMTP_OPTIONS__SERVER
-      LLDAP_SMTP_OPTIONS__PORT
-      LLDAP_SMTP_OPTIONS__SMTP_ENCRYPTION
-      LLDAP_SMTP_OPTIONS__ENABLE_PASSWORD_RESET
-      LLDAP_SMTP_OPTIONS__FROM
-    )
-    ;;
-  authelia)
-    UNSET_VARS+=(
-      AUTHELIA_NOTIFIER_SMTP_HOST
-      AUTHELIA_NOTIFIER_SMTP_PORT
-      AUTHELIA_NOTIFIER_SMTP_DISABLE_REQUIRE_TLS
-      AUTHELIA_NOTIFIER_SMTP_SENDER
-    )
-    ;;
-esac
+# Add custom vars if configured for this app
+APP_VARS_FILE="$VARS_DIR/$APP"
+if [[ -f "$APP_VARS_FILE" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Skip empty lines and comments
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^# ]] && continue
+
+    KEY="${line%%=*}"
+    UNSET_VARS+=("$KEY")
+  done < "$APP_VARS_FILE"
+fi
 
 # Remove environment variables from the app
-dokku config:unset --no-restart "$APP" "${UNSET_VARS[@]}" || true
+if [[ ${#UNSET_VARS[@]} -gt 0 ]]; then
+  echo "-----> Removing config vars"
+  for var in "${UNSET_VARS[@]}"; do
+    echo "       $var"
+  done
+  dokku config:unset --no-restart "$APP" "${UNSET_VARS[@]}" 2>/dev/null || true
+fi
 
 # Remove from links file
 grep -v "^$APP$" "$SERVICE_ROOT/LINKS" > "$SERVICE_ROOT/LINKS.tmp" || true
