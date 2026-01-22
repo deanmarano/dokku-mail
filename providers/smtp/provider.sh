@@ -45,7 +45,8 @@ provider_create_container() {
     -e "RELAYHOST_USERNAME=$SMTP_USERNAME"
     -e "RELAYHOST_PASSWORD=$SMTP_PASSWORD"
     -e "ALLOWED_SENDER_DOMAINS=$FROM_DOMAIN"
-    -e "POSTFIX_smtpd_recipient_restrictions=permit_mynetworks,reject_unauth_destination"
+    -e "POSTFIX_smtpd_recipient_restrictions=permit_mynetworks,reject_unauth_destination" \
+    -e "POSTFIX_smtpd_tls_security_level=none"
   )
 
   # Handle TLS mode

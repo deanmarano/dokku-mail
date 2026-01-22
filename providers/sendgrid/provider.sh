@@ -39,6 +39,7 @@ provider_create_container() {
     -e "RELAYHOST_PASSWORD=$API_KEY" \
     -e "ALLOWED_SENDER_DOMAINS=$FROM_DOMAIN" \
     -e "POSTFIX_smtpd_recipient_restrictions=permit_mynetworks,reject_unauth_destination" \
+    -e "POSTFIX_smtpd_tls_security_level=none" \
     "$PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION"
 }
 
