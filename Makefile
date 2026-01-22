@@ -47,7 +47,7 @@ lint: shellcheck
 shellcheck:
 	@echo "Running shellcheck..."
 	@shellcheck -x commands config install
-	@shellcheck -x -e SC2153 subcommands/*
+	@shellcheck -x subcommands/*
 	@shellcheck -x -e SC2034 providers/*/provider.sh
 	@echo "Shellcheck passed!"
 

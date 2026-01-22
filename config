@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+# Provider variables (set by load_provider from providers/*/provider.sh)
+# shellcheck disable=SC2034
+declare PROVIDER_NAME PROVIDER_DISPLAY_NAME PROVIDER_IMAGE PROVIDER_IMAGE_VERSION
+# shellcheck disable=SC2034
+declare PROVIDER_SMTP_PORT PROVIDER_REQUIRED_CONFIG PROVIDER_OPTIONAL_CONFIG
+
 export PLUGIN_COMMAND_PREFIX="mail"
 export PLUGIN_SERVICE="mail"
 export PLUGIN_DATA_ROOT="${DOKKU_LIB_ROOT:-/var/lib/dokku}/services/mail"
