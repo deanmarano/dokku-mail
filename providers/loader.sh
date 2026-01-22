@@ -23,8 +23,12 @@ load_provider() {
 
 list_providers() {
   for provider_dir in "$PLUGIN_BASE_PATH/providers"/*/; do
+    local provider_name
+    provider_name=$(basename "$provider_dir")
+    # Skip _template directory
+    [[ "$provider_name" == "_template" ]] && continue
     if [[ -f "$provider_dir/provider.sh" ]]; then
-      basename "$provider_dir"
+      echo "$provider_name"
     fi
   done
 }
