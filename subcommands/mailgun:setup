@@ -15,7 +15,7 @@ API_KEY="$3"
 if [[ -z "$DOMAIN" ]]; then
   echo "Usage: dokku mail:mailgun:setup <service> <domain> [api-key]"
   echo ""
-  echo "Set up Mailgun as the mail provider"
+  echo "Set up Mailgun as the mail provider with optional DNS automation"
   echo ""
   echo "Arguments:"
   echo "  service    Mail service name (default: 'default')"
@@ -24,11 +24,12 @@ if [[ -z "$DOMAIN" ]]; then
   echo ""
   echo "Options:"
   echo "  --region=<region>    Mailgun region: us (default) or eu"
+  echo "  --skip-dns           Skip DNS record creation"
   echo ""
   echo "Requirements:"
   echo "  - Mailgun account (https://mailgun.com)"
-  echo "  - Verified domain in Mailgun"
   echo "  - API key from Mailgun dashboard"
+  echo "  - dokku-dns plugin (optional, for DNS automation)"
   echo ""
   echo "Examples:"
   echo "  dokku mail:mailgun:setup default mg.example.com"
@@ -48,10 +49,14 @@ fi
 
 # Parse options
 REGION="us"
+SKIP_DNS=""
 for arg in "$@"; do
   case "$arg" in
     --region=*)
       REGION="${arg#*=}"
+      ;;
+    --skip-dns)
+      SKIP_DNS="true"
       ;;
   esac
 done
@@ -100,8 +105,11 @@ case "$REGION" in
     ;;
 esac
 
-# Verify API key and domain
+# Verify API key and check/create domain
 echo "-----> Verifying Mailgun credentials..."
+
+DOMAIN_EXISTS=""
+DOMAIN_BODY=""
 
 if command -v curl &>/dev/null; then
   RESPONSE=$(curl -s -w "\n%{http_code}" \
@@ -115,6 +123,8 @@ if command -v curl &>/dev/null; then
     200)
       echo "       ✓ API key valid"
       echo "       ✓ Domain $DOMAIN found"
+      DOMAIN_EXISTS="true"
+      DOMAIN_BODY="$BODY"
 
       # Check domain state if jq is available
       if command -v jq &>/dev/null; then
@@ -123,7 +133,6 @@ if command -v curl &>/dev/null; then
           echo "       ✓ Domain is active"
         else
           echo "       ! Domain state: $STATE"
-          echo "         Verify DNS records in Mailgun dashboard"
         fi
       fi
       ;;
@@ -133,11 +142,8 @@ if command -v curl &>/dev/null; then
       exit 1
       ;;
     404)
-      echo "!     Domain $DOMAIN not found in Mailgun"
-      echo ""
-      echo "       Add the domain at: https://app.mailgun.com/app/sending/domains"
-      echo "       Then re-run this command"
-      exit 1
+      echo "       Domain $DOMAIN not found, will create it..."
+      DOMAIN_EXISTS=""
       ;;
     *)
       echo "!     Failed to verify credentials (HTTP $HTTP_CODE)"
@@ -146,6 +152,94 @@ if command -v curl &>/dev/null; then
   esac
 else
   echo "       Skipping API verification (curl not installed)"
+fi
+
+# Create domain in Mailgun if it doesn't exist
+if [[ -z "$DOMAIN_EXISTS" ]] && command -v curl &>/dev/null; then
+  echo "-----> Creating domain in Mailgun..."
+  RESPONSE=$(curl -s -w "\n%{http_code}" \
+    --user "api:$API_KEY" \
+    -X POST "$API_BASE/domains" \
+    -F name="$DOMAIN" 2>/dev/null)
+
+  HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+  BODY=$(echo "$RESPONSE" | head -n -1)
+
+  case "$HTTP_CODE" in
+    200|201)
+      echo "       ✓ Domain created"
+      DOMAIN_EXISTS="true"
+      # Fetch full domain info including DNS records
+      DOMAIN_BODY=$(curl -s --user "api:$API_KEY" "$API_BASE/domains/$DOMAIN" 2>/dev/null)
+      ;;
+    *)
+      echo "!     Failed to create domain (HTTP $HTTP_CODE)"
+      if command -v jq &>/dev/null; then
+        MSG=$(echo "$BODY" | jq -r '.message // "Unknown error"')
+        echo "       $MSG"
+      fi
+      echo "       Create domain manually at: https://app.mailgun.com/app/sending/domains"
+      ;;
+  esac
+fi
+
+# Set up DNS records via dokku-dns
+if [[ -z "$SKIP_DNS" ]] && [[ -n "$DOMAIN_BODY" ]]; then
+  # Check for dokku-dns
+  if command -v dokku &>/dev/null && dokku dns:version &>/dev/null 2>&1; then
+    echo "-----> Setting up DNS records via dokku-dns..."
+
+    if command -v jq &>/dev/null; then
+      # Extract sending DNS records from Mailgun response
+      SENDING_RECORDS=$(echo "$DOMAIN_BODY" | jq -r '.sending_dns_records // empty')
+
+      if [[ -n "$SENDING_RECORDS" ]] && [[ "$SENDING_RECORDS" != "null" ]]; then
+        # Process each DNS record
+        echo "$DOMAIN_BODY" | jq -c '.sending_dns_records[]' 2>/dev/null | while read -r record; do
+          RECORD_TYPE=$(echo "$record" | jq -r '.record_type')
+          RECORD_NAME=$(echo "$record" | jq -r '.name')
+          RECORD_VALUE=$(echo "$record" | jq -r '.value')
+          RECORD_VALID=$(echo "$record" | jq -r '.valid')
+
+          if [[ "$RECORD_VALID" == "valid" ]]; then
+            echo "       ✓ $RECORD_NAME ($RECORD_TYPE) - already valid"
+          else
+            echo "       Creating: $RECORD_NAME ($RECORD_TYPE)"
+            if dokku dns:records:create "$RECORD_NAME" "$RECORD_TYPE" "$RECORD_VALUE" --ttl 300 >/dev/null 2>&1; then
+              echo "         ✓ Added"
+            else
+              echo "         ✗ Failed (may already exist)"
+            fi
+          fi
+        done
+
+        # Add DMARC record
+        DMARC_NAME="_dmarc.${DOMAIN}"
+        DMARC_VALUE="v=DMARC1; p=none;"
+        echo "-----> Adding DMARC record..."
+        echo "       Creating: $DMARC_NAME"
+        if dokku dns:records:create "$DMARC_NAME" TXT "$DMARC_VALUE" --ttl 300 >/dev/null 2>&1; then
+          echo "         ✓ Added"
+        else
+          echo "         ✗ Failed (may already exist)"
+        fi
+      else
+        echo "       Could not extract DNS records from Mailgun response"
+      fi
+    else
+      echo "       jq not installed, skipping DNS automation"
+      echo "       Install jq to enable automatic DNS record creation"
+    fi
+  else
+    echo "-----> dokku-dns not available, skipping DNS automation"
+    echo "       Install dokku-dns for automatic DNS record creation:"
+    echo "         dokku plugin:install https://github.com/deanmarano/dokku-dns.git dns"
+    echo ""
+    echo "       Or manually add DNS records shown in Mailgun dashboard:"
+    echo "         https://app.mailgun.com/app/sending/domains/$DOMAIN"
+  fi
+elif [[ -n "$SKIP_DNS" ]]; then
+  echo "-----> Skipping DNS setup (--skip-dns flag)"
 fi
 
 # Test SMTP connectivity
@@ -175,4 +269,19 @@ echo "       Domain: $DOMAIN"
 echo "       Region: $REGION"
 echo "       Service: $SERVICE"
 echo ""
+
+# Check final domain verification status
+if [[ -n "$DOMAIN_BODY" ]] && command -v jq &>/dev/null; then
+  STATE=$(echo "$DOMAIN_BODY" | jq -r '.domain.state // "unknown"')
+  if [[ "$STATE" == "active" ]]; then
+    echo "       Domain Status: Verified ✓"
+  else
+    echo "       Domain Status: $STATE (DNS verification pending)"
+    echo ""
+    echo "       DNS records may take a few minutes to propagate."
+    echo "       Check status at: https://app.mailgun.com/app/sending/domains/$DOMAIN"
+  fi
+  echo ""
+fi
+
 echo "       Test with: dokku mail:test $SERVICE your@email.com"

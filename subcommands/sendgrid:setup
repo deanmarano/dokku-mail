@@ -10,33 +10,36 @@ source "$PLUGIN_BASE_PATH/config"
 
 SERVICE="${1:-default}"
 API_KEY="$2"
+DOMAIN="$3"
 
 if [[ "$SERVICE" == "--help" ]] || [[ "$SERVICE" == "-h" ]]; then
-  echo "Usage: dokku mail:sendgrid:setup <service> [api-key]"
+  echo "Usage: dokku mail:sendgrid:setup <service> [api-key] [domain]"
   echo ""
-  echo "Set up SendGrid as the mail provider"
+  echo "Set up SendGrid as the mail provider with optional DNS automation"
   echo ""
   echo "Arguments:"
   echo "  service    Mail service name (default: 'default')"
   echo "  api-key    SendGrid API key (starts with SG.)"
+  echo "  domain     Domain for sender authentication (optional)"
   echo ""
   echo "Options:"
-  echo "  --domain=<domain>    Restrict sending to domain (default: *)"
+  echo "  --domain=<domain>    Domain for sender authentication and DNS setup"
+  echo "  --skip-dns           Skip DNS record creation"
   echo ""
   echo "Requirements:"
   echo "  - SendGrid account (https://sendgrid.com)"
-  echo "  - API key with 'Mail Send' permission"
-  echo "  - Sender Identity verified (domain or single sender)"
+  echo "  - API key with 'Mail Send' and 'Sender Authentication' permissions"
+  echo "  - dokku-dns plugin (optional, for DNS automation)"
   echo ""
   echo "To get an API key:"
   echo "  1. Go to https://app.sendgrid.com/settings/api_keys"
   echo "  2. Click 'Create API Key'"
-  echo "  3. Give it a name and select 'Restricted Access'"
-  echo "  4. Enable 'Mail Send' under 'Mail'"
+  echo "  3. Select 'Full Access' or enable 'Mail Send' + 'Sender Authentication'"
   echo ""
   echo "Examples:"
-  echo "  dokku mail:sendgrid:setup default"
   echo "  dokku mail:sendgrid:setup default SG.abc123..."
+  echo "  dokku mail:sendgrid:setup default SG.abc123... example.com"
+  echo "  dokku mail:sendgrid:setup default SG.abc123... --domain=example.com"
   exit 0
 fi
 
@@ -51,13 +54,23 @@ fi
 
 # Parse options
 FROM_DOMAIN="*"
+SKIP_DNS=""
 for arg in "$@"; do
   case "$arg" in
     --domain=*)
-      FROM_DOMAIN="${arg#*=}"
+      DOMAIN="${arg#*=}"
+      FROM_DOMAIN="$DOMAIN"
+      ;;
+    --skip-dns)
+      SKIP_DNS="true"
       ;;
   esac
 done
+
+# If domain was passed as 3rd positional arg, use it
+if [[ -n "$DOMAIN" ]]; then
+  FROM_DOMAIN="$DOMAIN"
+fi
 
 # Check if already configured
 CURRENT_PROVIDER=$(cat "$SERVICE_ROOT/PROVIDER" 2>/dev/null || echo "")
@@ -139,6 +152,142 @@ else
   exit 1
 fi
 
+# Set up domain authentication and DNS if domain provided
+DOMAIN_AUTH_ID=""
+if [[ -n "$DOMAIN" ]] && [[ -z "$SKIP_DNS" ]] && command -v curl &>/dev/null; then
+  echo "-----> Setting up domain authentication for $DOMAIN..."
+
+  # Check if domain is already authenticated
+  EXISTING_AUTH=$(curl -s \
+    -H "Authorization: Bearer $API_KEY" \
+    "https://api.sendgrid.com/v3/whitelabel/domains" 2>/dev/null)
+
+  if command -v jq &>/dev/null; then
+    DOMAIN_AUTH_ID=$(echo "$EXISTING_AUTH" | jq -r ".[] | select(.domain == \"$DOMAIN\") | .id" 2>/dev/null | head -1)
+  fi
+
+  if [[ -n "$DOMAIN_AUTH_ID" ]] && [[ "$DOMAIN_AUTH_ID" != "null" ]]; then
+    echo "       Domain authentication already exists (ID: $DOMAIN_AUTH_ID)"
+  else
+    # Create domain authentication
+    echo "       Creating domain authentication..."
+    RESPONSE=$(curl -s -w "\n%{http_code}" \
+      -H "Authorization: Bearer $API_KEY" \
+      -H "Content-Type: application/json" \
+      -X POST "https://api.sendgrid.com/v3/whitelabel/domains" \
+      -d "{\"domain\": \"$DOMAIN\", \"automatic_security\": true}" 2>/dev/null)
+
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | head -n -1)
+
+    case "$HTTP_CODE" in
+      200|201)
+        echo "       ✓ Domain authentication created"
+        if command -v jq &>/dev/null; then
+          DOMAIN_AUTH_ID=$(echo "$BODY" | jq -r '.id // empty')
+        fi
+        ;;
+      400)
+        if command -v jq &>/dev/null; then
+          MSG=$(echo "$BODY" | jq -r '.errors[0].message // "Unknown error"')
+          echo "       ! $MSG"
+        else
+          echo "       ! Failed to create domain authentication"
+        fi
+        ;;
+      401|403)
+        echo "       ! API key lacks 'Sender Authentication' permission"
+        echo "         Create a new API key with full access or add this permission"
+        ;;
+      *)
+        echo "       ! Failed to create domain authentication (HTTP $HTTP_CODE)"
+        ;;
+    esac
+  fi
+
+  # Get DNS records if we have a domain auth ID
+  if [[ -n "$DOMAIN_AUTH_ID" ]] && [[ "$DOMAIN_AUTH_ID" != "null" ]]; then
+    echo "-----> Fetching DNS records..."
+    DNS_RESPONSE=$(curl -s \
+      -H "Authorization: Bearer $API_KEY" \
+      "https://api.sendgrid.com/v3/whitelabel/domains/$DOMAIN_AUTH_ID" 2>/dev/null)
+
+    # Check for dokku-dns
+    if command -v dokku &>/dev/null && dokku dns:version &>/dev/null 2>&1; then
+      echo "-----> Setting up DNS records via dokku-dns..."
+
+      if command -v jq &>/dev/null; then
+        # Process DNS records from SendGrid response
+        # SendGrid returns dns object with mail_cname, dkim1, dkim2, etc.
+        for key in mail_cname dkim1 dkim2; do
+          RECORD_HOST=$(echo "$DNS_RESPONSE" | jq -r ".dns.$key.host // empty")
+          RECORD_DATA=$(echo "$DNS_RESPONSE" | jq -r ".dns.$key.data // empty")
+          RECORD_VALID=$(echo "$DNS_RESPONSE" | jq -r ".dns.$key.valid // false")
+
+          if [[ -n "$RECORD_HOST" ]] && [[ "$RECORD_HOST" != "null" ]]; then
+            if [[ "$RECORD_VALID" == "true" ]]; then
+              echo "       ✓ $RECORD_HOST - already valid"
+            else
+              echo "       Creating: $RECORD_HOST (CNAME)"
+              if dokku dns:records:create "$RECORD_HOST" CNAME "$RECORD_DATA" --ttl 300 >/dev/null 2>&1; then
+                echo "         ✓ Added"
+              else
+                echo "         ✗ Failed (may already exist)"
+              fi
+            fi
+          fi
+        done
+
+        # Add DMARC record
+        DMARC_NAME="_dmarc.${DOMAIN}"
+        DMARC_VALUE="v=DMARC1; p=none;"
+        echo "-----> Adding DMARC record..."
+        echo "       Creating: $DMARC_NAME"
+        if dokku dns:records:create "$DMARC_NAME" TXT "$DMARC_VALUE" --ttl 300 >/dev/null 2>&1; then
+          echo "         ✓ Added"
+        else
+          echo "         ✗ Failed (may already exist)"
+        fi
+      else
+        echo "       jq not installed, skipping DNS automation"
+      fi
+    else
+      echo "-----> dokku-dns not available, skipping DNS automation"
+      echo "       Install dokku-dns for automatic DNS record creation:"
+      echo "         dokku plugin:install https://github.com/deanmarano/dokku-dns.git dns"
+      echo ""
+      echo "       Or manually add DNS records shown in SendGrid dashboard:"
+      echo "         https://app.sendgrid.com/settings/sender_auth/domains"
+    fi
+
+    # Trigger validation
+    echo "-----> Triggering domain validation..."
+    VALIDATE_RESPONSE=$(curl -s -w "\n%{http_code}" \
+      -H "Authorization: Bearer $API_KEY" \
+      -X POST "https://api.sendgrid.com/v3/whitelabel/domains/$DOMAIN_AUTH_ID/validate" 2>/dev/null)
+
+    HTTP_CODE=$(echo "$VALIDATE_RESPONSE" | tail -n1)
+    BODY=$(echo "$VALIDATE_RESPONSE" | head -n -1)
+
+    if [[ "$HTTP_CODE" == "200" ]]; then
+      if command -v jq &>/dev/null; then
+        VALID=$(echo "$BODY" | jq -r '.valid // false')
+        if [[ "$VALID" == "true" ]]; then
+          echo "       ✓ Domain validated successfully!"
+        else
+          echo "       Domain validation pending (DNS propagation may take time)"
+        fi
+      fi
+    fi
+  fi
+elif [[ -n "$SKIP_DNS" ]]; then
+  echo "-----> Skipping DNS setup (--skip-dns flag)"
+elif [[ -z "$DOMAIN" ]]; then
+  echo "-----> No domain specified, skipping domain authentication"
+  echo "       To set up domain authentication, re-run with:"
+  echo "         dokku mail:sendgrid:setup $SERVICE $API_KEY example.com"
+fi
+
 # Save configuration
 echo "-----> Configuring mail service..."
 mkdir -p "$SERVICE_ROOT/provider-config"
@@ -152,8 +301,25 @@ dokku mail:provider:apply "$SERVICE"
 echo ""
 echo "-----> SendGrid setup complete!"
 echo "       Service: $SERVICE"
+if [[ -n "$DOMAIN" ]]; then
+  echo "       Domain: $DOMAIN"
+fi
 echo ""
-echo "       Important: Make sure you have a verified Sender Identity"
-echo "       https://app.sendgrid.com/settings/sender_auth"
-echo ""
+
+# Show domain status if we set it up
+if [[ -n "$DOMAIN_AUTH_ID" ]] && [[ "$DOMAIN_AUTH_ID" != "null" ]] && command -v jq &>/dev/null; then
+  FINAL_STATUS=$(curl -s \
+    -H "Authorization: Bearer $API_KEY" \
+    "https://api.sendgrid.com/v3/whitelabel/domains/$DOMAIN_AUTH_ID" 2>/dev/null)
+  VALID=$(echo "$FINAL_STATUS" | jq -r '.valid // false')
+  if [[ "$VALID" == "true" ]]; then
+    echo "       Domain Status: Verified ✓"
+  else
+    echo "       Domain Status: Pending verification"
+    echo "       DNS records may take a few minutes to propagate."
+    echo "       Check status at: https://app.sendgrid.com/settings/sender_auth/domains"
+  fi
+  echo ""
+fi
+
 echo "       Test with: dokku mail:test $SERVICE your@email.com"
