@@ -37,8 +37,8 @@ dokku mail:test default you@example.com
 | **Mock** | Development, testing | None required | No |
 | **AWS SES** | High volume, AWS users | Automated (via dokku-dns) | Yes (via AWS CLI) |
 | **Resend** | Simple API, good DX | Automated (via dokku-dns) | Yes |
-| **Mailgun** | Established service | Manual | Yes |
-| **SendGrid** | Popular, reliable | Manual | Yes |
+| **Mailgun** | Established service | Automated (via dokku-dns) | Yes |
+| **SendGrid** | Popular, reliable | Automated (via dokku-dns) | Yes |
 | **SMTP** | Existing SMTP server | N/A | No |
 
 ## Installation
@@ -206,21 +206,43 @@ dokku mail:provider:apply myservice
 
 ```bash
 dokku mail:provider:set myservice mailgun
-dokku mail:mailgun:setup myservice yourdomain.com your_api_key
+dokku mail:mailgun:setup myservice mg.yourdomain.com your_api_key
 dokku mail:provider:apply myservice
 ```
 
+The setup command:
+- Creates domain in Mailgun if needed
+- Fetches required DNS records (SPF, DKIM)
+- Creates DNS records via dokku-dns
+- Adds DMARC record
+
 For EU region:
 ```bash
-dokku mail:provider:config myservice REGION=eu
+dokku mail:mailgun:setup myservice mg.yourdomain.com your_api_key --region=eu
+```
+
+To skip DNS automation:
+```bash
+dokku mail:mailgun:setup myservice mg.yourdomain.com your_api_key --skip-dns
 ```
 
 ### SendGrid
 
 ```bash
 dokku mail:provider:set myservice sendgrid
-dokku mail:sendgrid:setup myservice SG.your_api_key
+dokku mail:sendgrid:setup myservice SG.your_api_key yourdomain.com
 dokku mail:provider:apply myservice
+```
+
+The setup command:
+- Creates domain authentication in SendGrid
+- Fetches required CNAME records
+- Creates DNS records via dokku-dns
+- Adds DMARC record
+
+To skip DNS automation:
+```bash
+dokku mail:sendgrid:setup myservice SG.your_api_key --skip-dns
 ```
 
 ### Generic SMTP
