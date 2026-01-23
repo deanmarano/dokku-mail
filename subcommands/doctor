@@ -136,21 +136,22 @@ fi
 echo "-----> Checking linked apps..."
 if [[ -f "$SERVICE_ROOT/LINKS" ]] && [[ -s "$SERVICE_ROOT/LINKS" ]]; then
   CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME" 2>/dev/null || echo "")
+  CONTAINER_HOSTNAME="$CONTAINER_NAME"
   SMTP_PORT=$(provider_get_smtp_port)
 
   while IFS= read -r APP; do
     [[ -z "$APP" ]] && continue
 
     if dokku apps:exists "$APP" &>/dev/null; then
-      # Check if app has correct SMTP_HOST
+      # Check if app has correct SMTP_HOST (accept either IP or hostname)
       APP_SMTP_HOST=$(dokku config:get "$APP" SMTP_HOST 2>/dev/null || echo "")
       APP_SMTP_PORT=$(dokku config:get "$APP" SMTP_PORT 2>/dev/null || echo "")
 
-      if [[ "$APP_SMTP_HOST" == "$CONTAINER_IP" ]] && [[ "$APP_SMTP_PORT" == "$SMTP_PORT" ]]; then
+      if [[ "$APP_SMTP_PORT" == "$SMTP_PORT" ]] && { [[ "$APP_SMTP_HOST" == "$CONTAINER_IP" ]] || [[ "$APP_SMTP_HOST" == "$CONTAINER_HOSTNAME" ]]; }; then
         check_pass "App $APP: correctly configured"
       else
         check_warn "App $APP: config drift detected"
-        echo "         Expected: SMTP_HOST=$CONTAINER_IP SMTP_PORT=$SMTP_PORT"
+        echo "         Expected: SMTP_HOST=$CONTAINER_HOSTNAME SMTP_PORT=$SMTP_PORT"
         echo "         Actual:   SMTP_HOST=$APP_SMTP_HOST SMTP_PORT=$APP_SMTP_PORT"
         echo "         Run: dokku mail:link $SERVICE $APP"
       fi
