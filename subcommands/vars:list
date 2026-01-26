@@ -57,3 +57,91 @@ else
   echo "  dokku mail:vars:set $APP KEY=VALUE"
   echo "  dokku mail:vars:set $APP --template=lldap"
 fi
+
+# Verify vars are properly set on the app
+echo ""
+echo "-----> Verifying app configuration"
+
+# Check if app exists
+if ! dokku apps:exists "$APP" 2>/dev/null; then
+  echo "       ! App $APP does not exist"
+  exit 0
+fi
+
+# Find which service the app is linked to
+LINKED_SERVICE=""
+for service_dir in "$PLUGIN_DATA_ROOT"/*/; do
+  service=$(basename "$service_dir")
+  [[ "$service" == "app-vars" ]] && continue
+  if grep -q "^$APP$" "$service_dir/LINKS" 2>/dev/null; then
+    LINKED_SERVICE="$service"
+    break
+  fi
+done
+
+if [[ -z "$LINKED_SERVICE" ]]; then
+  echo "       ! App is not linked to any mail service"
+  echo "       Run: dokku mail:link <service> $APP"
+  exit 0
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$LINKED_SERVICE"
+CONTAINER_NAME="dokku.mail.$LINKED_SERVICE"
+
+# Get expected values
+SMTP_HOST="$CONTAINER_NAME"
+source "$PLUGIN_BASE_PATH/providers/loader.sh"
+load_provider "$LINKED_SERVICE"
+SMTP_PORT=$(provider_get_smtp_port)
+SENDER_DOMAIN=""
+if [[ -f "$SERVICE_ROOT/provider-config/SENDER_DOMAIN" ]]; then
+  SENDER_DOMAIN=$(cat "$SERVICE_ROOT/provider-config/SENDER_DOMAIN")
+fi
+
+# Function to expand placeholders
+expand_placeholders() {
+  local value="$1"
+  value="${value//%HOST%/$SMTP_HOST}"
+  value="${value//%PORT%/$SMTP_PORT}"
+  value="${value//%DOMAIN%/$SENDER_DOMAIN}"
+  value="${value//%APP%/$APP}"
+  echo "$value"
+}
+
+# Build expected vars list
+declare -A EXPECTED_VARS
+EXPECTED_VARS["SMTP_HOST"]="$SMTP_HOST"
+EXPECTED_VARS["SMTP_PORT"]="$SMTP_PORT"
+EXPECTED_VARS["MAIL_URL"]="smtp://$SMTP_HOST:$SMTP_PORT"
+
+if [[ -f "$APP_VARS_FILE" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^# ]] && continue
+    KEY="${line%%=*}"
+    VALUE="${line#*=}"
+    EXPECTED_VARS["$KEY"]=$(expand_placeholders "$VALUE")
+  done < "$APP_VARS_FILE"
+fi
+
+# Check each expected var
+DRIFT_FOUND=false
+for KEY in "${!EXPECTED_VARS[@]}"; do
+  EXPECTED="${EXPECTED_VARS[$KEY]}"
+  ACTUAL=$(dokku config:get "$APP" "$KEY" 2>/dev/null || echo "")
+
+  if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+    if [[ "$DRIFT_FOUND" == false ]]; then
+      echo "       ! Configuration drift detected:"
+      DRIFT_FOUND=true
+    fi
+    echo "         $KEY: expected '$EXPECTED', got '$ACTUAL'"
+  fi
+done
+
+if [[ "$DRIFT_FOUND" == true ]]; then
+  echo ""
+  echo "       Run to fix: dokku mail:link $LINKED_SERVICE $APP"
+else
+  echo "       ✓ All vars correctly set on $APP (linked to $LINKED_SERVICE)"
+fi
