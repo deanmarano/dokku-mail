@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # AWS SES provider - uses Postfix to relay emails to Amazon SES
+# shellcheck source=../../functions
+source "$PLUGIN_BASE_PATH/functions"
 
 PROVIDER_NAME="aws"
 PROVIDER_DISPLAY_NAME="AWS SES"
@@ -32,10 +34,12 @@ provider_create_container() {
 
   local SES_ENDPOINT="email-smtp.$AWS_REGION.amazonaws.com"
 
+  # shellcheck disable=SC2046
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     --network "$NETWORK" \
+    $(get_expose_flags "$SERVICE") \
     -e "RELAYHOST=$SES_ENDPOINT:587" \
     -e "RELAYHOST_USERNAME=$SMTP_USERNAME" \
     -e "RELAYHOST_PASSWORD=$SMTP_PASSWORD" \

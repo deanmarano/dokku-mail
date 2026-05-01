@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Mock provider - uses MailHog to capture emails (no external delivery)
+# shellcheck source=../../functions
+source "$PLUGIN_BASE_PATH/functions"
 
 PROVIDER_NAME="mock"
 PROVIDER_DISPLAY_NAME="Mock (MailHog)"
@@ -15,11 +17,13 @@ provider_create_container() {
   local NETWORK="${MAIL_NETWORK:-dokku.mail.$SERVICE}"
 
   # Configure MailHog to listen on port 25 for consistency with other providers
+  # shellcheck disable=SC2046
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     --network "$NETWORK" \
     -p "$PROVIDER_WEB_PORT:8025" \
+    $(get_expose_flags "$SERVICE") \
     "$PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION" \
     -smtp-bind-addr "0.0.0.0:25"
 }

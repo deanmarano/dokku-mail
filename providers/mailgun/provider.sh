@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Mailgun provider - relay emails through Mailgun SMTP
+# shellcheck source=../../functions
+source "$PLUGIN_BASE_PATH/functions"
 
 PROVIDER_NAME="mailgun"
 PROVIDER_DISPLAY_NAME="Mailgun"
@@ -46,10 +48,12 @@ provider_create_container() {
   # Mailgun SMTP auth: username is postmaster@domain, password is API key
   local SMTP_USERNAME="postmaster@$DOMAIN"
 
+  # shellcheck disable=SC2046
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     --network "$NETWORK" \
+    $(get_expose_flags "$SERVICE") \
     -e "RELAYHOST=$SMTP_HOST:587" \
     -e "RELAYHOST_USERNAME=$SMTP_USERNAME" \
     -e "RELAYHOST_PASSWORD=$API_KEY" \

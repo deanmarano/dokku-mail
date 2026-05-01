@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # SendGrid provider - relay emails through SendGrid SMTP
+# shellcheck source=../../functions
+source "$PLUGIN_BASE_PATH/functions"
 
 PROVIDER_NAME="sendgrid"
 PROVIDER_DISPLAY_NAME="SendGrid"
@@ -30,10 +32,12 @@ provider_create_container() {
   fi
 
   # SendGrid SMTP auth: username is literally "apikey", password is the API key
+  # shellcheck disable=SC2046
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     --network "$NETWORK" \
+    $(get_expose_flags "$SERVICE") \
     -e "RELAYHOST=$SENDGRID_SMTP:587" \
     -e "RELAYHOST_USERNAME=apikey" \
     -e "RELAYHOST_PASSWORD=$API_KEY" \

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+source "$PLUGIN_BASE_PATH/providers/loader.sh"
+
+[[ "$1" == "mail:unexpose" ]] && shift
+
+SERVICE="${1:-default}"
+
+if [[ -z "$SERVICE" ]]; then
+  echo "Usage: dokku mail:unexpose <service>"
+  exit 1
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+CONTAINER_NAME="dokku.mail.$SERVICE"
+
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  exit 1
+fi
+
+if [[ ! -f "$SERVICE_ROOT/EXPOSE" ]]; then
+  echo "!     Service $SERVICE is not exposed"
+  exit 1
+fi
+
+echo "-----> Unexposing $SERVICE SMTP port"
+rm -f "$SERVICE_ROOT/EXPOSE"
+
+load_provider "$SERVICE"
+
+if docker ps -aq -f "name=$CONTAINER_NAME" | grep -q .; then
+  echo "-----> Restarting container to remove port binding"
+  docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+fi
+
+export MAIL_NETWORK="dokku.mail.$SERVICE"
+provider_create_container "$SERVICE"
+
+echo "       ✓ SMTP port no longer exposed on host"

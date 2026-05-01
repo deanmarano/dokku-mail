@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Generic SMTP provider - relay to any SMTP server
+# shellcheck source=../../functions
+source "$PLUGIN_BASE_PATH/functions"
 
 PROVIDER_NAME="smtp"
 PROVIDER_DISPLAY_NAME="Generic SMTP"
@@ -62,10 +64,12 @@ provider_create_container() {
       ;;
   esac
 
+  # shellcheck disable=SC2046
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     --network "$NETWORK" \
+    $(get_expose_flags "$SERVICE") \
     "${ENV_VARS[@]}" \
     "$PROVIDER_IMAGE:$PROVIDER_IMAGE_VERSION"
 }

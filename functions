@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Shared helper functions for the mail plugin
+
+# Returns docker -p flags for any saved expose binding, empty string if unexposed.
+# Usage: local flags; flags=$(get_expose_flags "$SERVICE")
+#        docker run ... $flags ...
+get_expose_flags() {
+  local SERVICE="$1"
+  local EXPOSE_FILE="$PLUGIN_DATA_ROOT/$SERVICE/EXPOSE"
+  if [[ -f "$EXPOSE_FILE" ]] && [[ -s "$EXPOSE_FILE" ]]; then
+    echo "-p $(cat "$EXPOSE_FILE")"
+  fi
+}

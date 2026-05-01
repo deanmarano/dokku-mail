@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PLUGIN_BASE_PATH/config"
+source "$PLUGIN_BASE_PATH/providers/loader.sh"
+
+[[ "$1" == "mail:expose" ]] && shift
+
+SERVICE="${1:-default}"
+HOST_BINDING="${2:-127.0.0.1:1025}"
+
+if [[ -z "$SERVICE" ]]; then
+  echo "Usage: dokku mail:expose <service> [host:port]"
+  echo ""
+  echo "Expose the SMTP port on the host. Defaults to 127.0.0.1:1025 (localhost only)."
+  echo ""
+  echo "Examples:"
+  echo "  dokku mail:expose default                  # binds 127.0.0.1:1025"
+  echo "  dokku mail:expose default 127.0.0.1:2525   # binds 127.0.0.1:2525"
+  exit 1
+fi
+
+SERVICE_ROOT="$PLUGIN_DATA_ROOT/$SERVICE"
+CONTAINER_NAME="dokku.mail.$SERVICE"
+
+if [[ ! -d "$SERVICE_ROOT" ]]; then
+  echo "!     Service $SERVICE does not exist"
+  exit 1
+fi
+
+# Validate binding format — must be host:port or port only
+if [[ "$HOST_BINDING" =~ ^[0-9]+$ ]]; then
+  HOST_BINDING="127.0.0.1:$HOST_BINDING"
+fi
+
+if [[ ! "$HOST_BINDING" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$ ]]; then
+  echo "!     Invalid binding format: $HOST_BINDING"
+  echo "      Expected host:port (e.g. 127.0.0.1:1025)"
+  exit 1
+fi
+
+# Persist the expose binding so provider:apply and restarts honour it
+echo "${HOST_BINDING}:25" > "$SERVICE_ROOT/EXPOSE"
+
+echo "-----> Exposing $SERVICE SMTP on $HOST_BINDING (localhost only)"
+
+# Recreate the container with the new port binding
+load_provider "$SERVICE"
+
+if docker ps -aq -f "name=$CONTAINER_NAME" | grep -q .; then
+  echo "-----> Restarting container to apply port binding"
+  docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+fi
+
+export MAIL_NETWORK="dokku.mail.$SERVICE"
+provider_create_container "$SERVICE"
+
+echo "       ✓ SMTP now accessible at $HOST_BINDING on this host"
+echo "       Configure msmtp or other clients with: host=127.0.0.1 port=$(echo "$HOST_BINDING" | cut -d: -f2)"

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Resend provider - uses Postfix to relay emails to Resend
+# shellcheck source=../../functions
+source "$PLUGIN_BASE_PATH/functions"
 
 PROVIDER_NAME="resend"
 PROVIDER_DISPLAY_NAME="Resend"
@@ -26,10 +28,12 @@ provider_create_container() {
     return 1
   fi
 
+  # shellcheck disable=SC2046
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     --network "$NETWORK" \
+    $(get_expose_flags "$SERVICE") \
     -e "RELAYHOST=smtp.resend.com:587" \
     -e "RELAYHOST_USERNAME=resend" \
     -e "RELAYHOST_PASSWORD=$API_KEY" \

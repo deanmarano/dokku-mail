@@ -48,6 +48,15 @@ echo "       SMTP Host: $CONTAINER_NAME (via Docker DNS)"
 echo "       SMTP Port: $PLUGIN_SMTP_PORT"
 echo "       Internal IP: $CONTAINER_IP"
 
+# Exposed ports
+if [[ -f "$SERVICE_ROOT/EXPOSE" ]]; then
+  BINDING=$(cat "$SERVICE_ROOT/EXPOSE")
+  HOST_PORT="${BINDING%:*}"
+  echo "       Exposed: $HOST_PORT (host)"
+else
+  echo "       Exposed: no"
+fi
+
 # Image
 if [[ -f "$SERVICE_ROOT/IMAGE" ]]; then
   echo "       Image: $(cat "$SERVICE_ROOT/IMAGE")"
