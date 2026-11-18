@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 PLUGIN_BASE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$PLUGIN_BASE_PATH/config"
-[[ " mail:help mail " == *" $1 "* ]] || [[ "$1" == "mail:"* ]] || exit "$DOKKU_NOT_IMPLEMENTED_EXIT"
+[[ " help mail:help mail " == *" $1 "* ]] || [[ "$1" == "mail:"* ]] || exit "$DOKKU_NOT_IMPLEMENTED_EXIT"
 
 set -eo pipefail
 [[ $DOKKU_TRACE ]] && set -x
@@ -59,6 +59,13 @@ show_help() {
 }
 
 case "$1" in
+  # `dokku help --all` runs every plugin's `commands help` under set -eo pipefail
+  # and pipes the output through `column -c2 -t -s,`, so bare `help` must succeed
+  # and print `command,description` pairs. Derived from show_help so they can't drift.
+  help)
+    show_help | sed -E 's/\x1b\[[0-9;]*m//g' \
+      | sed -n -E 's/^    (mail(:[^[:space:]]+)?( [^[:space:]]+)*)[[:space:]]{2,}(.*)$/    \1,\4/p'
+    ;;
   mail|mail:help)
     show_help
     ;;
