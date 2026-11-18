@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SendGrid provider - relay emails through SendGrid SMTP
-# shellcheck source=../../functions
+# shellcheck source=functions
 source "$PLUGIN_BASE_PATH/functions"
 
 PROVIDER_NAME="sendgrid"

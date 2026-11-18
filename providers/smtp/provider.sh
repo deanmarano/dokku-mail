@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Generic SMTP provider - relay to any SMTP server
-# shellcheck source=../../functions
+# shellcheck source=functions
 source "$PLUGIN_BASE_PATH/functions"
 
 PROVIDER_NAME="smtp"

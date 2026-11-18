@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Mock provider - uses MailHog to capture emails (no external delivery)
-# shellcheck source=../../functions
+# shellcheck source=functions
 source "$PLUGIN_BASE_PATH/functions"
 
 PROVIDER_NAME="mock"

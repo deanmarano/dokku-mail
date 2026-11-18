@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Mailgun provider - relay emails through Mailgun SMTP
-# shellcheck source=../../functions
+# shellcheck source=functions
 source "$PLUGIN_BASE_PATH/functions"
 
 PROVIDER_NAME="mailgun"

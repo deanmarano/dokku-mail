@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Resend provider - uses Postfix to relay emails to Resend
-# shellcheck source=../../functions
+# shellcheck source=functions
 source "$PLUGIN_BASE_PATH/functions"
 
 PROVIDER_NAME="resend"

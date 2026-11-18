@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AWS SES provider - uses Postfix to relay emails to Amazon SES
-# shellcheck source=../../functions
+# shellcheck source=functions
 source "$PLUGIN_BASE_PATH/functions"
 
 PROVIDER_NAME="aws"
